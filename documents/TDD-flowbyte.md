@@ -506,7 +506,8 @@ class Reconciler:
 ### 7.1 API basics
 
 - Base URL: `https://{shop}.myharavan.com/admin`
-- Auth header: `X-Haravan-Access-Token: {token}`
+- Auth header: `Authorization: Bearer {token}`
+  > ⚠️ **E2E verified 2026-04-24:** Haravan Omnichannel trả `WWW-Authenticate: Bearer`, yêu cầu `Authorization: Bearer`, không phải `X-Haravan-Access-Token`. Mọi code example trong TDD dùng header cũ đều phải dùng header mới này.
 - Endpoints MVP:
   - `GET /shop.json` (healthcheck)
   - `GET /orders.json?updated_at_min=...&limit=250&page=N&order=updated_at asc`
@@ -571,7 +572,7 @@ class HaravanClient:
     def __init__(self, shop_domain: str, access_token: str,
                  bucket: HaravanTokenBucket, http: httpx.Client):
         self._base = f"https://{shop_domain}/admin"
-        self._headers = {"X-Haravan-Access-Token": access_token}
+        self._headers = {"Authorization": f"Bearer {access_token}"}
         self._bucket = bucket
         self._http = http
 
@@ -1620,7 +1621,7 @@ Cold start prime:
 def _prime_bucket(self):
     # Gọi /admin/shop.json lấy header rate limit → seed bucket
     resp = self.http.get(f"https://{self.shop}/admin/shop.json",
-                         headers={"X-Haravan-Access-Token": self.token})
+                         headers={"Authorization": f"Bearer {self.token}"})
     self.bucket.sync_from_header(resp.headers.get("X-Haravan-Api-Call-Limit"))
 ```
 
@@ -1946,4 +1947,5 @@ Go-live gate:
 | Ngày | Version | Thay đổi |
 |---|---|---|
 | 2026-04-24 | v1 | TDD đầu tiên; 16 sections theo khung OPA + 8 kiến trúc đã chốt + dòng "💡 Tại sao" mỗi section lớn |
+| 2026-04-24 | **1.2** | **E2E verified với Haravan API thật:** (1) Auth header đổi toàn bộ từ `X-Haravan-Access-Token` → `Authorization: Bearer` (§7.1, §7.3, cold start prime) — Haravan Omnichannel thực tế dùng Bearer auth, không phải header trong docs cũ; (2) `orders.order_number` Haravan trả `"#85983"` (string có prefix `#`) → kiểu phải là `VARCHAR/TEXT`, không phải `INTEGER`. Cả hai lỗi chỉ phát hiện qua E2E, unit test không bắt được. |
 | 2026-04-24 | 1.1 | Senior review — 11 amendments §17: full-refresh `_sync_id` marker, bootstrap non-root, timezone config, sync_request recovery, keyset pagination, async log sink, schedule stagger, validation rules v2, migration safety, built-in backup + DR, Prometheus observability |

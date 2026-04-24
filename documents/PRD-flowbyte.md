@@ -486,7 +486,8 @@ Validation: ⚠️ 1 warning (inventory_levels)
 
 ### 🔗 Haravan API (Extract)
 - **Base URL:** `https://{shop}.myharavan.com/admin/{resource}.json`
-- **Auth:** Header `X-Haravan-Access-Token: <token>` (Private app token từ Haravan admin)
+- **Auth:** Header `Authorization: Bearer <token>` (Private app token từ Haravan admin)
+  > ⚠️ **E2E verified 2026-04-24:** Haravan Omnichannel trả `WWW-Authenticate: Bearer` và yêu cầu `Authorization: Bearer <token>`, KHÔNG dùng `X-Haravan-Access-Token` như docs cũ ghi. Fix đã áp dụng trong `haravan/client.py`.
 - **Rate limit:** Leaky bucket **80 burst, 4 req/s leak** ([docs](https://docs.haravan.com/docs/omni-apis/api-call-limit/))
   - Client-side token bucket sync với response header `X-Haravan-Api-Call-Limit: current/80`
   - 429 → đọc `Retry-After` header, sleep, retry exponential backoff (max 5 lần)
@@ -899,8 +900,8 @@ GROUP BY 1;
 
 | ID | Tên story | Mô tả ngắn | Phức tạp | Phụ thuộc vào | Sprint | Status |
 |---|---|---|---|---|---|---|
-| **US-001** | F2: Quản lý Pipeline qua CLI + YAML | 8 CLI commands, YAML config, credentials mã hóa AES-256-GCM, master key | M | — | S1 | ⚠️ Partial |
-| **US-002** | F4: Incremental Sync | Cursor timestamp, checkpoint atomic, overlap 5 phút, tự Full Refresh lần đầu | M | US-001 | S1 | ⚠️ Partial |
+| **US-001** | F2: Quản lý Pipeline qua CLI + YAML | 8 CLI commands, YAML config, credentials mã hóa AES-256-GCM, master key | M | — | S1 | ✅ Done |
+| **US-002** | F4: Incremental Sync | Cursor timestamp, checkpoint atomic, overlap 5 phút, tự Full Refresh lần đầu | M | US-001 | S1 | ✅ Done |
 | **US-003** | F6: Data Transformation YAML | rename / skip / type_override field qua YAML config, validate trước save | S | US-001 | S1 | ⚠️ Partial |
 | **US-004** | F1: Core Sync Engine | ETL pipeline đầy đủ: 6 resources Phase 1, scheduler APScheduler, token bucket rate limit | L | US-001, US-002, US-003 | S1 | ⚠️ Partial |
 | **US-005** | F7: Alerting Telegram | Alert sync fail + scheduler dead, không spam, `flowbyte alert test` | S | US-004 | S2 | ⚠️ Partial |
@@ -916,7 +917,13 @@ GROUP BY 1;
 | **US-015** | F15: Multi-shop | 1 Flowbyte instance sync nhiều shop Haravan, queue per-shop token bucket | L | US-001, US-004 | — | ⏳ Todo |
 | **US-016** | F16: Data Quality Monitoring | Schema evolution alert, abnormal pattern detection | M | US-006 | — | ⏳ Todo |
 
-> **⚠️ Partial (US-001 → US-008):** code structure + unit tests xanh, chưa test end-to-end với Haravan API thật và Postgres thật.
+> **✅ Done (US-001):** 8 CLI commands hoạt động, AES-256-GCM encryption, master key chmod 600, delete guard running sync. 49 unit tests xanh (22 CLI + 15 config + 12 master key). Đã commit + push lên GitHub.
+> **✅ Done (US-002):** Incremental sync đầy đủ: composite cursor (updated_at, id), 5-min overlap, first-sync auto full_refresh, regression guard checkpoint, soft-delete sweep. 66 unit tests mới xanh (11 checkpoint + 19 haravan_extract + 14 load + 22 sync_runner). Bugfix: `SyncResult.status` default="" để runner có thể khởi tạo trước khi set.
+> **⚠️ Partial (US-003):** code structure + unit tests xanh, chưa test E2E transform rename/skip/type_override với data Haravan thật.
+> **🔄 E2E In Progress (US-004) — 2026-04-24:** **Sprint 1 milestone ĐẠT:** `flowbyte validate shop_main` pass (< 5s) + `flowbyte run shop_main --resource orders` sync thành công 1 order thật từ Haravan (boshop-8.myharavan.com) vào Postgres. `flowbyte status` + `flowbyte history` hoạt động. Phát hiện và fix 2 bugs chỉ thấy qua E2E: (1) Auth header — Haravan dùng `Authorization: Bearer`, không phải `X-Haravan-Access-Token`; (2) `order_number` Haravan là string `"#85983"`, không phải integer → đổi schema `INTEGER` → `VARCHAR(32)`. **Còn lại để ✅ Done:** test E2E 5 resources còn lại (customers, products, variants, inventory_levels, locations) + verify ±0.1% count với shop production.
+> **⚠️ Partial (US-005 → US-008):** code structure + unit tests xanh, chưa test E2E với Haravan API thật và Postgres thật.
+> **🔒 Security Review (US-003) — 2026-04-24:** 2 lỗ hổng HIGH/CRITICAL đã được phát hiện và fix: (1) Path traversal trong `init/validate/enable/disable/delete` — `name` CLI arg không được validate trước khi dùng để build file path → fixed bằng `_assert_valid_name()` với regex `^[a-z0-9_]{1,32}$`; (2) Template injection qua `str.format(name=name)` trong PIPELINE_TEMPLATE → fixed bằng `str.replace("{name}", name)`. 6 tests bảo mật mới đã được thêm, 64/64 unit tests xanh. YAML loading (ruamel.yaml) và SQL injection (SQLAlchemy ORM) đã được verify là KHÔNG vulnerable.
+> **🔒 Security Review (US-004) — 2026-04-24:** 3 lỗ hổng đã được phát hiện và fix: (1) MEDIUM — `sync.py run` thiếu validation cho `pipeline` / `resource` / `mode` trước khi insert DB → fixed bằng `_assert_valid_name()` + resource whitelist `PHASE_1_RESOURCES` + mode enum check; (2) LOW — SSRF: shop domain regex `[a-zA-Z0-9\-\.]` cho phép IP address (e.g. `192.168.1.1`) → fixed bằng regex mới `*.myharavan.com` only; (3) LOW — Telegram Markdown injection: backtick trong error string phá vỡ code block format → fixed bằng `error.replace("\`", "'")`. 15 security tests mới (test_cli_sync.py + TestCredsSetShopDomainValidation), tổng 401 unit tests xanh. `/security-review` full scan: 4 candidate khác verify là false positive (hardcoded default = pre-existing + env-override; host injection = requires system access đã có; error display = chỉ operator thấy; `_raw` full record = thiết kế có chủ đích per PRD §⑦).
 > **— (US-009+):** Phase 2 trở đi, nằm ngoài 3 sprint MVP.
 
 ---
@@ -925,6 +932,7 @@ GROUP BY 1;
 
 #### Sprint 1 — "App chạy được"
 **Milestone:** `flowbyte validate shop_main` pass + `flowbyte run shop_main --resource orders` sync được records thật vào Postgres.
+> ✅ **Milestone đạt — 2026-04-24:** validate pass (shop: Beautyon Cosmetics), orders sync thành công với data thật. 2 E2E bugs phát hiện và fix (Bearer auth + order_number type).
 
 | Story | Lý do |
 |---|---|
@@ -959,6 +967,12 @@ GROUP BY 1;
 | Ngày | Version | Thay đổi | Người cập nhật |
 |---|---|---|---|
 | 2026-04-23 | v1 | Draft đầu tiên | Duy |
+| 2026-04-24 | **v11** | Cập nhật trạng thái: US-004 note → Sprint 1 milestone ĐẠT (validate pass + orders sync thành công với data thật, shop Beautyon Cosmetics). US-003 tách note riêng. US-005→US-008 giữ ⚠️ Partial. Sprint 1 milestone ghi nhận ngày đạt. | Duy + Claude |
+| 2026-04-24 | **v10** | **E2E verified với Haravan API thật (shop boshop-8.myharavan.com):** (1) Auth header sai — Haravan dùng `Authorization: Bearer <token>`, không phải `X-Haravan-Access-Token`; (2) `order_number` Haravan trả dạng string `"#85983"` không phải integer → schema `orders.order_number` đổi `INTEGER` → `VARCHAR(32)`. Cả hai lỗi chỉ phát hiện được qua E2E với API thật, unit test không bắt được. | Duy + Claude |
+| 2026-04-24 | **v9** | Security review US-004: fix 3 lỗ hổng — MEDIUM: thiếu input validation trong `sync.py run` (pipeline/resource/mode); LOW: SSRF shop domain regex cho phép IP → restrict `*.myharavan.com`; LOW: Telegram Markdown injection backtick → escape. 15 security tests mới, tổng 401 unit tests xanh. `/security-review` full: 4 candidate khác verify false positive. | Duy + Claude |
+| 2026-04-24 | **v8** | Security review US-003: fix 2 lỗ hổng HIGH/CRITICAL — path traversal trong 5 CLI commands (thiếu `_assert_valid_name()`) + template injection (`str.format` → `str.replace`). Thêm 6 security tests, tổng 64 unit tests xanh. YAML deserialization và SQL injection đã verify SAFE. | Duy + Claude |
+| 2026-04-24 | **v7** | US-002 → ✅ Done: 4 test files mới (test_checkpoint, test_haravan_extract, test_load, test_sync_runner), 66 unit tests xanh, total 366 tests. Bugfix SyncResult.status default="". | Duy + Claude |
+| 2026-04-24 | **v6** | US-001 → ✅ Done: implement đầy đủ init-master-key, validate (HaravanAuthError), delete (running-sync guard), 49 unit tests xanh, security review clean. Commit `81d1641` push lên GitHub `dannyngo0906/flowbyte`. | Duy + Claude |
 | 2026-04-24 | **v5** | Thêm cột Sprint (S1/S2/S3) vào bảng User Stories + Sprint Plan với milestone và lý do gom story. | Duy + Claude |
 | 2026-04-24 | **v4** | Thêm cột Status vào bảng User Stories (📝⏳🔄⚠️✅), hướng dẫn quy trình mỗi buổi build, mark US-001→US-008 là ⚠️ Partial (Sprint 1 xong). | Duy + Claude |
 | 2026-04-24 | **v3** | Thêm section ⑬ User Stories Backlog: đánh số US-001→US-016, bảng phức tạp S/M/L, dependency map, thứ tự implement hợp lý. | Duy + Claude |
