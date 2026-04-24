@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from flowbyte.config.models import TransformConfig
-from flowbyte.sync.transform import InvalidRecordError, apply_transform
+from flowbyte.sync.transform import InvalidRecordError, apply_transform, validate_transform_for_resource
 
 
 def _base_order(**overrides):
@@ -230,3 +230,105 @@ class TestTypeOverrideCasting:
         # Should return None or raise — currently returns None (skip on cast failure)
         out = apply_transform(record, cfg, "orders")
         assert out["total_price"] is None
+
+    def test_type_override_integer(self):
+        cfg = TransformConfig(type_override={"orders_count": "integer"})
+        record = {
+            "id": 9001, "email": "c@example.com", "phone": "090",
+            "first_name": "A", "last_name": "B",
+            "total_spent": "100.00", "orders_count": "5",
+            "accepts_marketing": True, "tags": "",
+            "created_at": "2025-01-15T08:00:00+07:00",
+            "updated_at": "2026-04-20T09:30:00+07:00",
+        }
+        out = apply_transform(record, cfg, "customers")
+        assert out["orders_count"] == 5
+        assert isinstance(out["orders_count"], int)
+
+    def test_type_override_boolean_string_true(self):
+        cfg = TransformConfig(type_override={"accepts_marketing": "boolean"})
+        record = {
+            "id": 9001, "email": "c@example.com", "phone": "090",
+            "first_name": "A", "last_name": "B",
+            "total_spent": "0", "orders_count": 1,
+            "accepts_marketing": "true",
+            "tags": "", "created_at": "2025-01-15T08:00:00+07:00",
+            "updated_at": "2026-04-20T09:30:00+07:00",
+        }
+        out = apply_transform(record, cfg, "customers")
+        assert out["accepts_marketing"] is True
+
+    def test_type_override_boolean_string_false(self):
+        cfg = TransformConfig(type_override={"accepts_marketing": "boolean"})
+        record = {
+            "id": 9001, "email": "c@example.com", "phone": "090",
+            "first_name": "A", "last_name": "B",
+            "total_spent": "0", "orders_count": 1,
+            "accepts_marketing": "0",
+            "tags": "", "created_at": "2025-01-15T08:00:00+07:00",
+            "updated_at": "2026-04-20T09:30:00+07:00",
+        }
+        out = apply_transform(record, cfg, "customers")
+        assert out["accepts_marketing"] is False
+
+    def test_type_override_timestamp_iso8601(self):
+        from datetime import datetime, timezone
+        cfg = TransformConfig(type_override={"created_at": "timestamp with time zone"})
+        out = apply_transform(_base_order(), cfg, "orders")
+        assert isinstance(out["created_at"], datetime)
+        assert out["created_at"].tzinfo == timezone.utc
+
+
+class TestSkipAndRenameOnNestedColumns:
+    """Skip/rename on nested-flatten and JSONB columns."""
+
+    def test_skip_nested_flatten_column_customer_email(self):
+        cfg = TransformConfig(skip=["customer_email"])
+        out = apply_transform(_base_order(), cfg, "orders")
+        assert "customer_email" not in out
+        assert "customer_phone" in out  # sibling column unaffected
+
+    def test_skip_nested_flatten_column_shipping_city(self):
+        cfg = TransformConfig(skip=["shipping_city"])
+        out = apply_transform(_base_order(), cfg, "orders")
+        assert "shipping_city" not in out
+        assert "shipping_province" in out
+
+    def test_rename_jsonb_column(self):
+        cfg = TransformConfig(rename={"note_attributes": "notes"})
+        out = apply_transform(_base_order(), cfg, "orders")
+        assert "notes" in out
+        assert "note_attributes" not in out
+        assert out["notes"] == [{"name": "source", "value": "web"}]
+
+    def test_skip_multiple_fields_mixed_types(self):
+        cfg = TransformConfig(skip=["email", "note_attributes", "customer_email"])
+        out = apply_transform(_base_order(), cfg, "orders")
+        assert "email" not in out
+        assert "note_attributes" not in out
+        assert "customer_email" not in out
+        assert "id" in out  # id always present
+
+
+class TestValidateTransformForResource:
+    def test_rename_to_existing_column_returns_error(self):
+        cfg = TransformConfig(rename={"total_price": "email"})
+        errors = validate_transform_for_resource(cfg, "orders")
+        assert len(errors) == 1
+        assert "email" in errors[0]
+
+    def test_rename_to_unique_name_returns_no_errors(self):
+        cfg = TransformConfig(rename={"total_price": "revenue"})
+        errors = validate_transform_for_resource(cfg, "orders")
+        assert errors == []
+
+    def test_rename_to_another_renamed_source_returns_no_errors(self):
+        # Chain rename: total_price → email (OK because email itself is renamed away)
+        cfg = TransformConfig(rename={"total_price": "email", "email": "contact_email"})
+        errors = validate_transform_for_resource(cfg, "orders")
+        assert errors == []
+
+    def test_unknown_resource_returns_no_errors(self):
+        cfg = TransformConfig(rename={"foo": "bar"})
+        errors = validate_transform_for_resource(cfg, "nonexistent_resource")
+        assert errors == []

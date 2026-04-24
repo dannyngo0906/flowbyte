@@ -48,6 +48,27 @@ class TestInitCommand:
         assert "password" not in content
         assert "credentials_ref" in content
 
+    def test_path_traversal_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["init", "../../../etc/evil"])
+        assert result.exit_code == 2
+        assert not (tmp_path.parent.parent.parent / "etc" / "evil.yml").exists()
+
+    def test_invalid_name_uppercase_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["init", "Shop_Main"])
+        assert result.exit_code == 2
+
+    def test_invalid_name_with_braces_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["init", "foo{bar}"])
+        assert result.exit_code == 2
+
+    def test_invalid_name_too_long_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["init", "a" * 33])
+        assert result.exit_code == 2
+
 
 # ── flowbyte init-master-key ──────────────────────────────────────────────────
 
@@ -289,6 +310,51 @@ class TestCredsUnknownAction:
         result = runner.invoke(app, ["creds", "badaction"])
         assert result.exit_code == 2
         assert "Unknown action" in result.output or "badaction" in result.output
+
+
+_MINIMAL_PIPELINE_YAML = """\
+name: shop_main
+haravan_credentials_ref: shop_main
+haravan_shop_domain: test.myharavan.com
+destination:
+  host: localhost
+  port: 5432
+  user: flowbyte
+  database: flowbyte_data
+  credentials_ref: pg_main
+"""
+
+
+class TestValidateCommand:
+    def test_validate_pipeline_not_found_exits_nonzero(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["validate", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_validate_path_traversal_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        result = runner.invoke(app, ["validate", "../../etc/passwd"])
+        assert result.exit_code == 2
+
+    def test_validate_yaml_parse_fails_on_skip_id(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        (tmp_path / "shop_main.yml").write_text(
+            _MINIMAL_PIPELINE_YAML
+            + "resources:\n  orders:\n    transform:\n      skip:\n        - id\n"
+        )
+        result = runner.invoke(app, ["validate", "shop_main"])
+        assert result.exit_code != 0
+
+    def test_validate_transform_rename_collision_exits_nonzero(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
+        (tmp_path / "shop_main.yml").write_text(
+            _MINIMAL_PIPELINE_YAML
+            + "resources:\n  orders:\n    transform:\n      rename:\n        total_price: email\n"
+        )
+        result = runner.invoke(app, ["validate", "shop_main"])
+        assert result.exit_code != 0
+        assert "email" in result.output
 
 
 class TestCredsDeleteCommand:

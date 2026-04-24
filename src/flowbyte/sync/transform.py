@@ -145,6 +145,34 @@ def apply_transform(
     return out
 
 
+def validate_transform_for_resource(
+    transform_config: TransformConfig,
+    resource: str,
+) -> list[str]:
+    """Return list of error messages for transform config against a specific resource. Empty = valid."""
+    rules = _FLATTENING_RULES.get(resource)
+    if rules is None:
+        return []
+
+    prefix_map = rules.get("nested_prefix", {})
+    existing_columns: set[str] = set(rules["flat_fields"])
+    for parent, children in rules["nested_flatten"].items():
+        prefix = prefix_map.get(parent, parent)
+        for child in children:
+            existing_columns.add(f"{prefix}_{child}")
+    existing_columns.update(rules["nested_jsonb"])
+
+    rename_sources: set[str] = set(transform_config.rename)
+
+    errors: list[str] = []
+    for src, tgt in transform_config.rename.items():
+        if tgt in existing_columns and tgt not in rename_sources:
+            errors.append(
+                f"rename '{src}' → '{tgt}': target '{tgt}' already exists as a column"
+            )
+    return errors
+
+
 def _cast(value: Any, pg_type: str, field_name: str) -> Any:
     """Attempt type conversion for type_override. Returns original if fails."""
     pg_type = pg_type.lower().strip()

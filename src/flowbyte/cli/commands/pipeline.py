@@ -16,6 +16,18 @@ from flowbyte.config.models import AppSettings
 app = typer.Typer(help="Pipeline management")
 console = Console()
 
+_PIPELINE_NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+
+
+def _assert_valid_name(name: str) -> None:
+    """Reject names that could cause path traversal or template injection."""
+    if not _PIPELINE_NAME_RE.match(name):
+        console.print(
+            f"[red]✗ Invalid pipeline name '{name}'.[/red] "
+            "Use only lowercase letters, digits, underscores (max 32 chars)."
+        )
+        raise typer.Exit(2)
+
 
 @app.command()
 def bootstrap():
@@ -58,6 +70,7 @@ def init_master_key(
 @app.command()
 def init(name: str = typer.Argument(..., help="Pipeline name (lowercase, underscores allowed)")):
     """Create a new pipeline YAML template."""
+    _assert_valid_name(name)
     settings = AppSettings()
     pipelines_dir = Path(settings.pipelines_dir)
     pipelines_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +80,7 @@ def init(name: str = typer.Argument(..., help="Pipeline name (lowercase, undersc
         console.print(f"[red]✗ Pipeline '{name}' already exists at {path}[/red]")
         raise typer.Exit(1)
 
-    content = PIPELINE_TEMPLATE.format(name=name)
+    content = PIPELINE_TEMPLATE.replace("{name}", name)
     path.write_text(content)
     console.print(f"[green]✓ Created {path}[/green]")
     console.print()
@@ -80,6 +93,7 @@ def init(name: str = typer.Argument(..., help="Pipeline name (lowercase, undersc
 @app.command()
 def validate(name: str = typer.Argument(...)):
     """Test Haravan + Postgres connection for a pipeline (<5s)."""
+    _assert_valid_name(name)
     settings = AppSettings()
     path = Path(settings.pipelines_dir) / f"{name}.yml"
 
@@ -91,6 +105,23 @@ def validate(name: str = typer.Argument(...)):
         cfg = load_pipeline_config(path)
     except Exception as e:
         console.print(f"[red]✗ YAML validation failed: {e}[/red]")
+        raise typer.Exit(2)
+
+    # Transform semantic validation (rename-to-existing-column check)
+    from flowbyte.sync.transform import validate_transform_for_resource
+
+    transform_errors: list[str] = []
+    for resource_name, resource_cfg in cfg.resources.items():
+        if not resource_cfg.enabled:
+            continue
+        errs = validate_transform_for_resource(resource_cfg.transform, resource_name)
+        for err in errs:
+            transform_errors.append(f"  [{resource_name}] {err}")
+
+    if transform_errors:
+        console.print("[red]✗ Transform validation failed:[/red]")
+        for msg in transform_errors:
+            console.print(msg)
         raise typer.Exit(2)
 
     # Schedule collision check
@@ -188,6 +219,7 @@ def delete(
     force: bool = typer.Option(False, "--force", help="Kill running sync and delete immediately"),
 ):
     """Delete a pipeline (refuses if sync is running unless --force)."""
+    _assert_valid_name(name)
     settings = AppSettings()
     from flowbyte.db.engine import get_internal_engine
     from flowbyte.db.internal_schema import pipelines, sync_runs
@@ -251,6 +283,7 @@ def creds(
 
 
 def _set_enabled(name: str, enabled: bool) -> None:
+    _assert_valid_name(name)
     settings = AppSettings()
     from flowbyte.config.loader import load_pipeline_config
     from flowbyte.db.engine import get_internal_engine
