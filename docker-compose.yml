@@ -1,0 +1,78 @@
+services:
+
+  # ── Flowbyte daemon ──────────────────────────────────────────────────────────
+  flowbyte:
+    build: .
+    image: flowbyte:latest
+    container_name: flowbyte
+    user: "1000:1000"
+    mem_limit: 1.5g
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLOWBYTE_DB_URL: postgresql+psycopg://flowbyte:${POSTGRES_PASSWORD:-flowbyte}@postgres:5432/flowbyte_internal
+      FLOWBYTE_DEST_DB_URL: postgresql+psycopg://flowbyte:${POSTGRES_PASSWORD:-flowbyte}@postgres:5432/flowbyte_destination
+      FLOWBYTE_MASTER_KEY_PATH: /run/secrets/master_key
+      FLOWBYTE_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FLOWBYTE_LOG_FORMAT: json
+      FLOWBYTE_PIPELINES_DIR: /etc/flowbyte/pipelines
+    volumes:
+      - ./config/config.yml:/etc/flowbyte/config.yml:ro
+      - ./config/pipelines:/etc/flowbyte/pipelines:ro
+      - ${MASTER_KEY_PATH:-/etc/flowbyte/master.key}:/run/secrets/master_key:ro
+      - flowbyte_logs:/var/log/flowbyte
+    networks:
+      - flowbyte_net
+    command: ["daemon"]
+
+  # ── Admin service (CLI access — not started by default) ───────────────────────
+  flowbyte-admin:
+    build: .
+    image: flowbyte:latest
+    user: "1000:1000"
+    profiles: ["admin"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLOWBYTE_DB_URL: postgresql+psycopg://flowbyte:${POSTGRES_PASSWORD:-flowbyte}@postgres:5432/flowbyte_internal
+      FLOWBYTE_DEST_DB_URL: postgresql+psycopg://flowbyte:${POSTGRES_PASSWORD:-flowbyte}@postgres:5432/flowbyte_destination
+      FLOWBYTE_MASTER_KEY_PATH: /run/secrets/master_key
+      FLOWBYTE_PIPELINES_DIR: /etc/flowbyte/pipelines
+    volumes:
+      - ./config:/etc/flowbyte
+      - ${MASTER_KEY_PATH:-/etc/flowbyte/master.key}:/run/secrets/master_key:ro
+    networks:
+      - flowbyte_net
+    entrypoint: ["flowbyte"]
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:14-alpine
+    container_name: flowbyte_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: flowbyte
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowbyte}
+      POSTGRES_DB: flowbyte_internal
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowbyte -d flowbyte_internal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - flowbyte_net
+
+volumes:
+  pg_data:
+  flowbyte_logs:
+
+networks:
+  flowbyte_net:
+    driver: bridge

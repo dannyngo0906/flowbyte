@@ -24,6 +24,37 @@ def bootstrap():
     run_bootstrap()
 
 
+@app.command("init-master-key")
+def init_master_key(
+    path: str = typer.Option("", "--path", "-p", help="Override master key path"),
+    skip_confirm: bool = typer.Option(False, "--skip-confirm", help="Skip backup confirmation (CI/testing)"),
+):
+    """Generate master key at /etc/flowbyte/master.key (or FLOWBYTE_MASTER_KEY_PATH)."""
+    from flowbyte.config.models import AppSettings
+    from flowbyte.security.master_key import MasterKey, MasterKeyError
+
+    settings = AppSettings()
+    key_path = Path(path) if path else Path(settings.master_key_path)
+
+    try:
+        key = MasterKey.generate_and_save(key_path)
+    except MasterKeyError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓ master.key created at {key_path}[/green]")
+    console.print(f"  Fingerprint (SHA-256): {key.fingerprint}")
+    console.print()
+    console.print("[bold yellow]⚠️  CRITICAL: Back up master.key NOW.[/bold yellow]")
+    console.print("   All encrypted credentials are unrecoverable without it.")
+    console.print(f"   Backup command:  sudo cp {key_path} /your/secure/backup/location")
+
+    if not skip_confirm:
+        confirmed = typer.prompt("\nType 'BACKED-UP' when done", default="")
+        if confirmed.strip() != "BACKED-UP":
+            console.print("[yellow]Warning: Continuing without confirmed backup.[/yellow]")
+
+
 @app.command()
 def init(name: str = typer.Argument(..., help="Pipeline name (lowercase, underscores allowed)")):
     """Create a new pipeline YAML template."""
@@ -75,6 +106,7 @@ def validate(name: str = typer.Argument(...)):
     try:
         from flowbyte.scheduler.reconciler import _load_credentials
         from flowbyte.haravan.client import HaravanClient
+        from flowbyte.haravan.exceptions import HaravanAuthError
         from flowbyte.haravan.token_bucket import HaravanTokenBucket
         from flowbyte.db.engine import get_internal_engine
 
@@ -83,6 +115,10 @@ def validate(name: str = typer.Argument(...)):
         client = HaravanClient(cfg.haravan_shop_domain, creds["access_token"], HaravanTokenBucket())
         shop = client.test_connection()
         console.print(f"[green]✓ OK[/green] (shop: {shop.get('shop', {}).get('name', 'unknown')})")
+    except HaravanAuthError:
+        console.print("[red]✗ FAILED[/red]: 401/403 Unauthorized")
+        console.print("  Hint: Check access token at Haravan Admin → Apps → Private apps")
+        raise typer.Exit(3)
     except Exception as e:
         console.print(f"[red]✗ FAILED[/red]: {e}")
         raise typer.Exit(1)
@@ -99,10 +135,10 @@ def validate(name: str = typer.Argument(...)):
         dest_engine = get_dest_engine(dest_url)
         with dest_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        console.print(f"[green]✓ OK[/green]")
+        console.print("[green]✓ OK[/green]")
     except Exception as e:
         console.print(f"[red]✗ FAILED[/red]: {e}")
-        console.print("  Hint: check host, port, user, database and pg_hba.conf")
+        console.print("  Hint: check host, port, user, database and pg_hba.conf/firewall")
         raise typer.Exit(1)
 
     console.print()
@@ -149,21 +185,36 @@ def disable(name: str = typer.Argument(...)):
 @app.command()
 def delete(
     name: str = typer.Argument(...),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+    force: bool = typer.Option(False, "--force", help="Kill running sync and delete immediately"),
 ):
-    """Delete a pipeline (with confirmation if sync is running)."""
+    """Delete a pipeline (refuses if sync is running unless --force)."""
+    settings = AppSettings()
+    from flowbyte.db.engine import get_internal_engine
+    from flowbyte.db.internal_schema import pipelines, sync_runs
+    from sqlalchemy import delete as sql_delete, select
+
+    engine = get_internal_engine(settings.db_url)
+
+    with engine.connect() as conn:
+        running_rows = conn.execute(
+            select(sync_runs.c.resource).where(
+                sync_runs.c.pipeline == name,
+                sync_runs.c.status == "running",
+            )
+        ).fetchall()
+
+    if running_rows and not force:
+        resources = ", ".join(r.resource for r in running_rows)
+        console.print(f"[yellow]⚠ Sync is currently running for: {resources}[/yellow]")
+        console.print("  Wait for it to finish, or use [bold]--force[/bold] to kill and delete.")
+        raise typer.Exit(1)
+
     if not force:
         confirmed = typer.confirm(f"Delete pipeline '{name}'?", default=False)
         if not confirmed:
             console.print("Aborted.")
             return
 
-    settings = AppSettings()
-    from flowbyte.db.engine import get_internal_engine
-    from flowbyte.db.internal_schema import pipelines
-    from sqlalchemy import delete as sql_delete
-
-    engine = get_internal_engine(settings.db_url)
     with engine.begin() as conn:
         result = conn.execute(sql_delete(pipelines).where(pipelines.c.name == name))
 

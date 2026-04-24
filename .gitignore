@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.env
+.venv
+venv/
+env/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Docker / local secrets
+*.key
+*.pem
+*.p12
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+/var/log/
+
+# Alembic local override
+alembic/versions/

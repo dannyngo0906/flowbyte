@@ -32,7 +32,8 @@ def test_acquire_multiple_increments(bucket):
 
 def test_acquire_blocks_at_safety_margin():
     bucket = HaravanTokenBucket()
-    bucket._tokens_used = float(HaravanTokenBucket.SAFETY_MARGIN) + 1.0
+    # Set well above SAFETY_MARGIN so wait = (78-70+1)/4 = 2.25s >> 0.5s timeout
+    bucket._tokens_used = float(HaravanTokenBucket.SAFETY_MARGIN) + 8.0
     bucket._last_leak = time.monotonic()
 
     acquired = threading.Event()

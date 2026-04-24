@@ -1,0 +1,61 @@
+[
+  {
+    "id": 5001,
+    "title": "Son môi",
+    "vendor": "Beauty Brand",
+    "product_type": "Son môi",
+    "handle": "son-moi",
+    "status": "active",
+    "tags": "son,moi,bestseller",
+    "created_at": "2024-01-01T08:00:00+07:00",
+    "updated_at": "2026-04-01T08:00:00+07:00",
+    "variants": [
+      {
+        "id": 7001,
+        "product_id": 5001,
+        "sku": "SKU-001",
+        "title": "Đỏ tươi",
+        "price": "160000.00",
+        "compare_at_price": "200000.00",
+        "inventory_item_id": 8001,
+        "inventory_quantity": 50,
+        "updated_at": "2026-04-01T08:00:00+07:00"
+      },
+      {
+        "id": 7003,
+        "product_id": 5001,
+        "sku": "SKU-003",
+        "title": "Hồng phấn",
+        "price": "180000.00",
+        "compare_at_price": "220000.00",
+        "inventory_item_id": 8003,
+        "inventory_quantity": 30,
+        "updated_at": "2026-04-01T08:00:00+07:00"
+      }
+    ]
+  },
+  {
+    "id": 5002,
+    "title": "Kem dưỡng da",
+    "vendor": "Skin Care Co",
+    "product_type": "Dưỡng da",
+    "handle": "kem-duong-da",
+    "status": "active",
+    "tags": "duong-da,moisturizer",
+    "created_at": "2024-03-15T10:00:00+07:00",
+    "updated_at": "2026-04-02T09:00:00+07:00",
+    "variants": [
+      {
+        "id": 7002,
+        "product_id": 5002,
+        "sku": "SKU-002",
+        "title": "50ml",
+        "price": "500000.00",
+        "compare_at_price": null,
+        "inventory_item_id": 8002,
+        "inventory_quantity": 20,
+        "updated_at": "2026-04-02T09:00:00+07:00"
+      }
+    ]
+  }
+]
