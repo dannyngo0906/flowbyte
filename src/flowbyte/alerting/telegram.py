@@ -1,6 +1,8 @@
 """Telegram Bot API alerter with retry on network failure."""
 from __future__ import annotations
 
+import re
+
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -10,6 +12,8 @@ from flowbyte.logging import EventName, get_logger
 log = get_logger()
 
 _TELEGRAM_API = "https://api.telegram.org"
+_BOT_TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{10,}$")
+_TELEGRAM_MAX_TEXT = 4096
 
 
 class TelegramAlerter:
@@ -20,7 +24,15 @@ class TelegramAlerter:
         deduper: AlertDeduper | None = None,
         http_client: httpx.Client | None = None,
     ) -> None:
+        if not _BOT_TOKEN_RE.match(bot_token):
+            raise ValueError(
+                "Invalid bot_token format — expected '<numeric_id>:<hash>' "
+                "(only digits, letters, underscores, hyphens allowed in hash)"
+            )
         self._url = f"{_TELEGRAM_API}/bot{bot_token}/sendMessage"
+        # Pre-compute masked URL so token never appears in log/error strings.
+        tok_id = bot_token.split(":")[0]
+        self._safe_url = f"{_TELEGRAM_API}/bot{tok_id}:***/sendMessage"
         self._chat_id = chat_id
         self._deduper = deduper or AlertDeduper()
         self._client = http_client or httpx.Client(timeout=10.0)
@@ -36,7 +48,9 @@ class TelegramAlerter:
             log.info(EventName.ALERT_SENT, pipeline=pipeline, key=key)
             return True
         except Exception as e:
-            log.error(EventName.ALERT_FAILED, error=str(e))
+            # Replace raw URL (which contains bot_token) with masked version before logging.
+            safe_err = str(e).replace(self._url, self._safe_url)
+            log.error(EventName.ALERT_FAILED, error=safe_err)
             return False
 
     @retry(
@@ -48,7 +62,11 @@ class TelegramAlerter:
     def _send_with_retry(self, text: str) -> None:
         response = self._client.post(
             self._url,
-            json={"chat_id": self._chat_id, "text": text, "parse_mode": "Markdown"},
+            json={
+                "chat_id": self._chat_id,
+                "text": text[:_TELEGRAM_MAX_TEXT],
+                "parse_mode": "Markdown",
+            },
         )
         response.raise_for_status()
 
@@ -59,12 +77,28 @@ class TelegramAlerter:
 
 
 def format_sync_fail_alert(pipeline: str, resource: str, error: str, sync_id: str) -> str:
-    safe_error = error[:300].replace("`", "'")
+    safe_error = error[:300].replace("`", "'").replace("*", "").replace("_", " ")
     return (
         f"🔴 *Sync FAILED*\n"
         f"📦 Pipeline: `{pipeline}`\n"
         f"📊 Resource: `{resource}`\n"
         f"💬 Error: `{safe_error}`\n"
+        f"🔗 `flowbyte inspect {sync_id[:8]}`"
+    )
+
+
+def format_validation_alert(
+    pipeline: str,
+    resource: str,
+    failed_rules: list[str],
+    sync_id: str,
+) -> str:
+    safe_rules = ", ".join(r.replace("*", "").replace("_", " ") for r in failed_rules)
+    return (
+        f"⚠️ *Validation FAILED*\n"
+        f"📦 Pipeline: `{pipeline}`\n"
+        f"📊 Resource: `{resource}`\n"
+        f"📋 Rules: `{safe_rules}`\n"
         f"🔗 `flowbyte inspect {sync_id[:8]}`"
     )
 

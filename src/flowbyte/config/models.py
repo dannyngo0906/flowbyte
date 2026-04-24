@@ -266,3 +266,6 @@ class SyncResult(BaseModel):
     rows_after: int = 0
     duration_seconds: float = 0.0
     error: str | None = None
+    validation_failed: bool = False
+    validation_statuses: list[str] = Field(default_factory=list)
+    validation_failed_rules: list[str] = Field(default_factory=list)

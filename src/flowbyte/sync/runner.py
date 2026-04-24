@@ -77,6 +77,9 @@ class SyncRunner:
             result.duration_seconds = round(time.time() - started_at.timestamp(), 2)
             self._record_run_finish(sync_id, result)
 
+        if result.status == "success":
+            self._run_validation(result)
+
         return result
 
     # ── Resource-specific sync strategies ─────────────────────────────────────
@@ -159,8 +162,10 @@ class SyncRunner:
         products_transformed, p_skipped = self._transform_batch(
             products_raw, transform_cfg, "products"
         )
+        variant_resource_cfg = self._cfg.resources.get("variants")
+        variant_transform_cfg = variant_resource_cfg.transform if variant_resource_cfg else None
         variants_transformed, v_skipped = self._transform_batch(
-            variants_raw, None, "variants"
+            variants_raw, variant_transform_cfg, "variants"
         )
 
         result.fetched_count = len(products_raw) + len(variants_raw)
@@ -274,6 +279,18 @@ class SyncRunner:
         from flowbyte.haravan.resources.locations import extract_locations
 
         return [loc["id"] for loc in extract_locations(self._haravan) if loc.get("id")]
+
+    def _run_validation(self, result: SyncResult) -> None:
+        try:
+            from flowbyte.validation.executor import ValidationExecutor
+            executor = ValidationExecutor(self._internal)
+            vr_list = executor.run(result)
+            result.validation_statuses = [v.status for v in vr_list]
+            result.validation_failed = any(v.status == "failed" for v in vr_list)
+            result.validation_failed_rules = [v.rule for v in vr_list if v.status == "failed"]
+        except Exception as e:
+            log.error(EventName.SYNC_FAILED, phase="validation", error=str(e), exc_info=True)
+
 
     def _record_run_start(
         self, sync_id: str, spec: SyncJobSpec, started_at: datetime

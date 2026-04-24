@@ -29,14 +29,15 @@ def _alert_test() -> None:
         console.print("[yellow]⚠ Telegram not enabled in config.yml[/yellow]")
         raise typer.Exit(1)
 
-    alerter = TelegramAlerter(
-        bot_token=tg.bot_token.get_secret_value(),
-        chat_id=tg.chat_id,
-    )
+    raw_token = tg.bot_token.get_secret_value()
+    alerter = TelegramAlerter(bot_token=raw_token, chat_id=tg.chat_id)
     try:
         alerter.test()
         console.print("[green]✓ Telegram test message sent successfully.[/green]")
     except Exception as e:
-        console.print(f"[red]✗ Failed to send Telegram alert: {e}[/red]")
+        # Mask bot_token in error message before printing to terminal.
+        tok_id = raw_token.split(":")[0] if ":" in raw_token else "***"
+        safe_msg = str(e).replace(raw_token, f"{tok_id}:***")
+        console.print(f"[red]✗ Failed to send Telegram alert: {safe_msg}[/red]")
         console.print("  Check: bot_token, chat_id, and outbound HTTPS to api.telegram.org")
         raise typer.Exit(1)

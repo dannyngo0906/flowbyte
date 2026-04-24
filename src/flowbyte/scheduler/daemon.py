@@ -37,10 +37,21 @@ def build_scheduler() -> BlockingScheduler:
 def start_daemon() -> None:
     from flowbyte.scheduler.reconciler import reconciler_tick
     from flowbyte.retention.cleanup import cleanup_tick
+    from flowbyte.config.loader import load_global_config
+    from flowbyte.alerting.telegram import TelegramAlerter, format_scheduler_dead_alert
 
     settings = AppSettings()
     internal_engine = get_internal_engine(settings.db_url)
     scheduler = build_scheduler()
+
+    # ── Build Telegram alerter (None when disabled) ───────────────────────────
+    global_cfg = load_global_config()
+    alerter: TelegramAlerter | None = None
+    if global_cfg.telegram.enabled:
+        alerter = TelegramAlerter(
+            bot_token=global_cfg.telegram.bot_token.get_secret_value(),
+            chat_id=global_cfg.telegram.chat_id,
+        )
 
     # ── Misfire alert listener ─────────────────────────────────────────────────
     def on_misfire(event):
@@ -61,7 +72,7 @@ def start_daemon() -> None:
         seconds=settings.scheduler_poll_interval_seconds,
         id="_reconciler",
         executor="internal",
-        args=[scheduler, internal_engine],
+        args=[scheduler, internal_engine, alerter],
     )
     scheduler.add_job(
         _heartbeat_tick,
@@ -79,6 +90,14 @@ def start_daemon() -> None:
         id="_cleanup",
         executor="internal",
         args=[internal_engine],
+    )
+    scheduler.add_job(
+        _heartbeat_watchdog_tick,
+        trigger="interval",
+        minutes=5,
+        id="_heartbeat_watchdog",
+        executor="internal",
+        args=[internal_engine, alerter],
     )
 
     # ── Signal handling ────────────────────────────────────────────────────────
@@ -120,6 +139,41 @@ def start_daemon() -> None:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         pass
+
+
+_STALE_HEARTBEAT_HOURS = 2.0
+
+
+def _heartbeat_watchdog_tick(internal_engine, alerter) -> None:
+    """Send SCHEDULER_DEAD alert if heartbeat row is stale > 2 hours."""
+    from flowbyte.db.internal_schema import scheduler_heartbeat
+    from flowbyte.alerting.telegram import format_scheduler_dead_alert
+    from sqlalchemy import select
+
+    if alerter is None:
+        return
+
+    with internal_engine.begin() as conn:
+        row = conn.execute(
+            select(scheduler_heartbeat).where(scheduler_heartbeat.c.id == 1)
+        ).one_or_none()
+
+    if row is None:
+        return
+
+    now = datetime.now(timezone.utc)
+    age_hours = (now - row.last_beat).total_seconds() / 3600
+    if age_hours > _STALE_HEARTBEAT_HOURS:
+        log.critical(
+            EventName.SCHEDULER_DEAD,
+            last_beat=row.last_beat.isoformat(),
+            age_hours=round(age_hours, 2),
+        )
+        text = format_scheduler_dead_alert(
+            last_beat=row.last_beat.isoformat(),
+            age_hours=age_hours,
+        )
+        alerter.send(text, key="scheduler_dead", pipeline="__system__")
 
 
 def _heartbeat_tick(internal_engine) -> None:

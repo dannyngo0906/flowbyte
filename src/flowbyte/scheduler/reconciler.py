@@ -30,14 +30,22 @@ _MAX_RECOVERIES = 3
 _INTERNAL_JOB_PREFIXES = ("_",)
 
 
-def reconciler_tick(scheduler: BlockingScheduler, internal_engine: Engine) -> None:
+def reconciler_tick(
+    scheduler: BlockingScheduler,
+    internal_engine: Engine,
+    alerter=None,
+) -> None:
     try:
-        _reconciler_tick_inner(scheduler, internal_engine)
+        _reconciler_tick_inner(scheduler, internal_engine, alerter)
     except Exception as e:
         log.error(EventName.RECONCILER_TICK, error=str(e), exc_info=True)
 
 
-def _reconciler_tick_inner(scheduler: BlockingScheduler, internal_engine: Engine) -> None:
+def _reconciler_tick_inner(
+    scheduler: BlockingScheduler,
+    internal_engine: Engine,
+    alerter=None,
+) -> None:
     with internal_engine.begin() as conn:
         # ── Step 0: Recover stale claimed requests ─────────────────────────
         _recover_stale_claims(conn, scheduler)
@@ -62,7 +70,7 @@ def _reconciler_tick_inner(scheduler: BlockingScheduler, internal_engine: Engine
                     trigger=CronTrigger.from_crontab(resource_cfg.schedule, timezone=tz),
                     id=job_id,
                     executor="default",
-                    args=[cfg.name, resource_name, resource_cfg.sync_mode, internal_engine],
+                    args=[cfg.name, resource_name, resource_cfg.sync_mode, internal_engine, alerter],
                     replace_existing=True,
                 )
 
@@ -77,7 +85,7 @@ def _reconciler_tick_inner(scheduler: BlockingScheduler, internal_engine: Engine
                         ),
                         id=weekly_id,
                         executor="default",
-                        args=[cfg.name, resource_name, "full_refresh", internal_engine],
+                        args=[cfg.name, resource_name, "full_refresh", internal_engine, alerter],
                         replace_existing=True,
                     )
 
@@ -109,6 +117,7 @@ def _reconciler_tick_inner(scheduler: BlockingScheduler, internal_engine: Engine
                     claimed["resource"],
                     claimed["mode"],
                     internal_engine,
+                    alerter,
                 ],
                 kwargs={"request_id": str(claimed["id"])},
             )
@@ -127,6 +136,7 @@ def _run_sync_job(
     resource: str,
     mode: str,
     internal_engine: Engine,
+    alerter=None,
     request_id: str | None = None,
 ) -> None:
     from flowbyte.config.models import AppSettings, SyncJobSpec
@@ -171,6 +181,34 @@ def _run_sync_job(
             trigger="manual" if request_id else "schedule",
         )
         result = runner.run(spec)
+
+        if result.status == "failed" and alerter is not None:
+            from flowbyte.alerting.telegram import format_sync_fail_alert
+            text = format_sync_fail_alert(
+                pipeline=pipeline_name,
+                resource=resource,
+                error=result.error or "",
+                sync_id=sync_id,
+            )
+            alerter.send(
+                text,
+                key=f"sync_fail:{pipeline_name}:{resource}",
+                pipeline=pipeline_name,
+            )
+
+        if result.validation_failed and alerter is not None:
+            from flowbyte.alerting.telegram import format_validation_alert
+            text = format_validation_alert(
+                pipeline=pipeline_name,
+                resource=resource,
+                failed_rules=result.validation_failed_rules,
+                sync_id=sync_id,
+            )
+            alerter.send(
+                text,
+                key=f"validation_fail:{pipeline_name}:{resource}",
+                pipeline=pipeline_name,
+            )
 
         if request_id:
             _update_request_status(

@@ -16,8 +16,8 @@ def status():
     """Show sync status overview for all pipelines × resources."""
     from flowbyte.config.models import AppSettings
     from flowbyte.db.engine import get_internal_engine
-    from flowbyte.db.internal_schema import pipelines, sync_runs
-    from sqlalchemy import select, func
+    from flowbyte.db.internal_schema import pipelines, sync_runs, validation_results
+    from sqlalchemy import select
 
     settings = AppSettings()
     engine = get_internal_engine(settings.db_url)
@@ -29,7 +29,7 @@ def status():
         console.print("No pipelines. Run [bold]flowbyte init <name>[/bold] to create one.")
         return
 
-    table = Table("PIPELINE", "RESOURCE", "LAST SYNC", "STATUS", "RECORDS", "NEXT SYNC")
+    table = Table("PIPELINE", "RESOURCE", "LAST SYNC", "STATUS", "RECORDS", "VALIDATION", "NEXT SYNC")
 
     with engine.connect() as conn:
         for p in pipeline_rows:
@@ -45,7 +45,7 @@ def status():
                 ).one_or_none()
 
                 if last_run is None:
-                    table.add_row(p.name, resource, "—", "⚪ DISABLED" if not p.enabled else "⚪ NEVER", "—", "—")
+                    table.add_row(p.name, resource, "—", "⚪ DISABLED" if not p.enabled else "⚪ NEVER", "—", "—", "—")
                     continue
 
                 status_icon = {
@@ -54,9 +54,22 @@ def status():
                     "running": "🟡 RUNNING",
                 }.get(last_run.status, "⚪ UNKNOWN")
 
+                val_rows = conn.execute(
+                    select(validation_results)
+                    .where(validation_results.c.sync_id == last_run.sync_id)
+                ).all()
+                if not val_rows:
+                    val_icon = "—"
+                elif any(r.status == "failed" for r in val_rows):
+                    val_icon = "❌ Failed"
+                elif any(r.status == "warning" for r in val_rows):
+                    val_icon = "⚠️ Warning"
+                else:
+                    val_icon = "✅ Healthy"
+
                 last_sync = str(last_run.finished_at)[:16] if last_run.finished_at else "—"
                 records = str(last_run.upserted_count or 0)
-                table.add_row(p.name, resource, last_sync, status_icon, records, "—")
+                table.add_row(p.name, resource, last_sync, status_icon, records, val_icon, "—")
 
     console.print(table)
 

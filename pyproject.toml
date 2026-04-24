@@ -57,6 +57,9 @@ addopts = "-ra --strict-markers --strict-config"
 markers = [
     "integration: requires Docker (testcontainers)",
 ]
+env = [
+    "TESTCONTAINERS_RYUK_DISABLED=true",
+]
 
 # ── Coverage ──────────────────────────────────────────────────────────────────
 
