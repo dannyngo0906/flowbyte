@@ -375,3 +375,47 @@ class TestReconcilerValidationAlert:
         val_key = f"validation_fail:{pipeline}:{resource}"
         sync_key = f"sync_fail:{pipeline}:{resource}"
         assert val_key != sync_key
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. Security: EventName correctness in _run_validation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestValidationEventNameSecurity:
+    """Verify _run_validation logs VALIDATION_FAILED (not SYNC_FAILED) on executor error.
+
+    Using SYNC_FAILED would trigger false Telegram alerts claiming the sync
+    failed when it actually succeeded and only the validation executor crashed.
+    """
+
+    def _make_runner(self, internal_engine):
+        from flowbyte.sync.runner import SyncRunner
+        r = MagicMock(spec=SyncRunner)
+        r._internal = internal_engine
+        r._run_validation = SyncRunner._run_validation.__get__(r)
+        return r
+
+    def test_executor_crash_logs_validation_failed_not_sync_failed(self):
+        from flowbyte.logging.events import EventName
+
+        engine = _make_engine()
+        r = self._make_runner(engine)
+        result = _make_result()
+
+        logged_events: list[str] = []
+
+        def mock_log_error(event, **kwargs):
+            logged_events.append(event)
+
+        with patch("flowbyte.validation.executor.ValidationExecutor.run") as mock_run:
+            mock_run.side_effect = RuntimeError("executor crash")
+            with patch("flowbyte.sync.runner.log") as mock_log:
+                mock_log.error.side_effect = lambda event, **kw: logged_events.append(event)
+                r._run_validation(result)
+
+        assert EventName.VALIDATION_FAILED in logged_events, (
+            "executor crash must log VALIDATION_FAILED, not SYNC_FAILED"
+        )
+        assert EventName.SYNC_FAILED not in logged_events, (
+            "SYNC_FAILED must not be logged for a validation executor error"
+        )

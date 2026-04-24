@@ -289,7 +289,7 @@ class SyncRunner:
             result.validation_failed = any(v.status == "failed" for v in vr_list)
             result.validation_failed_rules = [v.rule for v in vr_list if v.status == "failed"]
         except Exception as e:
-            log.error(EventName.SYNC_FAILED, phase="validation", error=str(e), exc_info=True)
+            log.error(EventName.VALIDATION_FAILED, phase="validation_executor", error=str(e), exc_info=True)
 
 
     def _record_run_start(

@@ -19,7 +19,7 @@ class ValidationExecutor:
         self._engine = internal_engine
 
     def run(self, result: SyncResult) -> list[ValidationResult]:
-        prev_runs = self._load_prev_runs(result.pipeline, result.resource)
+        prev_runs = self._load_prev_runs(result.pipeline, result.resource, result.sync_id)
         ctx = ValidationContext(
             pipeline=result.pipeline,
             resource=result.resource,
@@ -35,7 +35,7 @@ class ValidationExecutor:
         self._persist(ctx, vr_list)
         return vr_list
 
-    def _load_prev_runs(self, pipeline: str, resource: str) -> list[dict]:
+    def _load_prev_runs(self, pipeline: str, resource: str, current_sync_id: str) -> list[dict]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(sync_runs)
@@ -43,6 +43,7 @@ class ValidationExecutor:
                     sync_runs.c.pipeline == pipeline,
                     sync_runs.c.resource == resource,
                     sync_runs.c.status == "success",
+                    sync_runs.c.sync_id != current_sync_id,
                 )
                 .order_by(sync_runs.c.started_at.desc())
                 .limit(_PREV_RUNS_LIMIT)
