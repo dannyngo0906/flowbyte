@@ -37,7 +37,7 @@ orders = Table(
     "orders",
     destination_metadata,
     Column("id", BigInteger, primary_key=True),
-    Column("order_number", Integer),
+    Column("order_number", String(32)),
     Column("name", String(64)),
     Column("email", String(256)),
     Column("financial_status", String(32)),

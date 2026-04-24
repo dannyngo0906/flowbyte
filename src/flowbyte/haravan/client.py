@@ -51,7 +51,7 @@ class HaravanClient:
         self._client = http_client or httpx.Client(
             timeout=timeout,
             headers={
-                "X-Haravan-Access-Token": access_token,
+                "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
             },
         )
