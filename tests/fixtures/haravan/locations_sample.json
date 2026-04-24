@@ -1,0 +1,28 @@
+[
+  {
+    "id": 501,
+    "name": "HCM Warehouse",
+    "address1": "123 Nguyen Hue",
+    "address2": null,
+    "city": "Ho Chi Minh",
+    "province": "Ho Chi Minh",
+    "country_code": "VN",
+    "phone": "+84901234567",
+    "active": true,
+    "created_at": "2025-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": 502,
+    "name": "HN Warehouse",
+    "address1": "456 Hoan Kiem",
+    "address2": null,
+    "city": "Ha Noi",
+    "province": "Ha Noi",
+    "country_code": "VN",
+    "phone": "+84912345678",
+    "active": true,
+    "created_at": "2025-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  }
+]

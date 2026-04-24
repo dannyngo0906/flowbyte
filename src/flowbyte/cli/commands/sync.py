@@ -7,8 +7,12 @@ import time
 import typer
 from rich.console import Console
 
+from flowbyte.config.models import PHASE_1_RESOURCES
+
 app = typer.Typer()
 console = Console()
+
+_VALID_MODES = {"incremental", "full_refresh"}
 
 
 @app.command()
@@ -20,7 +24,24 @@ def run(
     timeout: int = typer.Option(300, "--timeout", help="Max seconds to wait"),
 ):
     """Trigger a manual sync (queued via sync_requests table)."""
+    from flowbyte.cli.commands.pipeline import _assert_valid_name
     from flowbyte.config.models import AppSettings
+
+    _assert_valid_name(pipeline)
+
+    if resource is not None and resource not in PHASE_1_RESOURCES:
+        console.print(
+            f"[red]✗ Unknown resource '{resource}'.[/red] "
+            f"Valid: {', '.join(sorted(PHASE_1_RESOURCES))}"
+        )
+        raise typer.Exit(2)
+
+    if mode not in _VALID_MODES:
+        console.print(
+            f"[red]✗ Invalid mode '{mode}'.[/red] "
+            f"Use: {' | '.join(sorted(_VALID_MODES))}"
+        )
+        raise typer.Exit(2)
     from flowbyte.db.engine import get_internal_engine
     from flowbyte.db.internal_schema import sync_requests
     from sqlalchemy import select

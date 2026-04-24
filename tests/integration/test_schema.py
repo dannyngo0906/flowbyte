@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,11 +32,16 @@ def _table_exists(conn, table_name: str) -> bool:
 
 
 def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    # pg_attribute covers both tables and materialized views;
+    # information_schema.columns omits matview columns in PostgreSQL.
     row = conn.execute(
         text(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_schema = 'public' "
-            "AND table_name = :t AND column_name = :c"
+            "SELECT 1 FROM pg_catalog.pg_attribute a "
+            "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' "
+            "AND c.relname = :t AND a.attname = :c "
+            "AND a.attnum > 0 AND NOT a.attisdropped"
         ),
         {"t": table_name, "c": column_name},
     ).fetchone()
@@ -267,7 +273,9 @@ class TestMigrationRoundtrip:
     @pytest.fixture(scope="class")
     def roundtrip_db_url(self, pg_container):
         base_url = pg_container.get_connection_url()
-        sa_base = base_url.replace("postgresql://", "postgresql+psycopg://")
+        sa_base = (base_url
+                   .replace("postgresql+psycopg2://", "postgresql+psycopg://")
+                   .replace("postgresql://", "postgresql+psycopg://"))
 
         rt_db = "flowbyte_roundtrip"
         admin_engine = create_engine(sa_base)
@@ -288,9 +296,10 @@ class TestMigrationRoundtrip:
         yield rt_url
 
     def _alembic(self, command: str, db_url: str) -> None:
+        alembic_bin = str(Path(sys.executable).parent / "alembic")
         env = {**os.environ, "FLOWBYTE_DB_URL": db_url}
         subprocess.run(
-            ["alembic", *command.split()],
+            [alembic_bin, *command.split()],
             env=env,
             check=True,
             cwd=PROJECT_ROOT,

@@ -171,6 +171,15 @@ class SyncRunner:
             v_stats = upsert_batch(dest_conn, get_table("variants"), variants_transformed, sync_id)
             result.upserted_count = p_stats.upserted + v_stats.upserted
 
+            if effective_mode == "full_refresh":
+                self._run_soft_delete_sweep(
+                    dest_conn,
+                    get_table("products"),
+                    sync_id,
+                    result,
+                    effective_fetched=len(products_transformed),
+                )
+
         watermark = compute_watermark(products_transformed)
         with self._internal.begin() as int_conn:
             save_checkpoint(int_conn, spec.pipeline, "products", watermark, sync_id)
@@ -236,10 +245,16 @@ class SyncRunner:
         return transformed, skipped
 
     def _run_soft_delete_sweep(
-        self, dest_conn, table, sync_id: str, result: SyncResult
+        self,
+        dest_conn,
+        table,
+        sync_id: str,
+        result: SyncResult,
+        effective_fetched: int | None = None,
     ) -> None:
         rows_before = count_active_rows(dest_conn, table)
-        would_delete = rows_before - result.fetched_count
+        fetched = effective_fetched if effective_fetched is not None else result.fetched_count
+        would_delete = rows_before - fetched
         if rows_before > 0:
             delete_pct = would_delete / rows_before * 100
             if delete_pct > _SOFT_DELETE_SANITY_MAX_PCT:
@@ -247,7 +262,7 @@ class SyncRunner:
                     EventName.SOFT_DELETE_SWEEP_ABORTED,
                     delete_pct=round(delete_pct, 2),
                     rows_before=rows_before,
-                    fetched=result.fetched_count,
+                    fetched=fetched,
                 )
                 return
 

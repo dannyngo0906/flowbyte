@@ -197,7 +197,12 @@ def upgrade() -> None:
     )
 
 
+    from flowbyte.db.internal_schema import SYNC_ROLLUP_DAILY_VIEW_SQL
+    op.execute(SYNC_ROLLUP_DAILY_VIEW_SQL)
+
+
 def downgrade() -> None:
+    op.execute("DROP MATERIALIZED VIEW IF EXISTS sync_rollup_daily")
     for table in [
         "master_key_metadata", "backup_events", "deployment_events",
         "scheduler_heartbeat", "validation_results", "sync_runs",

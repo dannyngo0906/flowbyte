@@ -337,7 +337,7 @@ def _creds_set(ref: str, kind: str) -> None:
 
     if kind == "haravan":
         shop_domain = typer.prompt("Haravan shop domain")
-        _SHOP_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-\.]{1,61}[a-zA-Z0-9]$")
+        _SHOP_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}\.myharavan\.com$")
         if not _SHOP_DOMAIN_RE.match(shop_domain):
             console.print("[red]Invalid shop domain. Use format: myshop.myharavan.com[/red]")
             raise typer.Exit(2)

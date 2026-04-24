@@ -59,11 +59,12 @@ class TelegramAlerter:
 
 
 def format_sync_fail_alert(pipeline: str, resource: str, error: str, sync_id: str) -> str:
+    safe_error = error[:300].replace("`", "'")
     return (
         f"🔴 *Sync FAILED*\n"
         f"📦 Pipeline: `{pipeline}`\n"
         f"📊 Resource: `{resource}`\n"
-        f"💬 Error: `{error[:300]}`\n"
+        f"💬 Error: `{safe_error}`\n"
         f"🔗 `flowbyte inspect {sync_id[:8]}`"
     )
 

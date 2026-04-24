@@ -241,6 +241,49 @@ class TestCredsListCommand:
         assert "haravan" in result.output
 
 
+class TestCredsSetShopDomainValidation:
+    """Security: shop domain must be *.myharavan.com (no SSRF via IP addresses)."""
+
+    def _invoke_with_domain(self, monkeypatch, tmp_path, domain: str):
+        key_path = tmp_path / "master.key"
+        from flowbyte.security.master_key import MasterKey
+        MasterKey.generate_and_save(key_path)
+        monkeypatch.setenv("FLOWBYTE_MASTER_KEY_PATH", str(key_path))
+        monkeypatch.setenv("FLOWBYTE_DB_URL", "postgresql+psycopg://x:x@localhost/x")
+        return runner.invoke(
+            app,
+            ["creds", "set", "ref_x", "--kind", "haravan"],
+            input=f"{domain}\ntoken\n",
+        )
+
+    def test_valid_haravan_domain_accepted(self, monkeypatch, tmp_path):
+        with patch("flowbyte.db.engine.get_internal_engine", return_value=MagicMock(
+            begin=MagicMock(return_value=MagicMock(
+                __enter__=MagicMock(return_value=MagicMock(execute=MagicMock())),
+                __exit__=MagicMock(return_value=False),
+            ))
+        )):
+            result = self._invoke_with_domain(monkeypatch, tmp_path, "myshop.myharavan.com")
+        assert result.exit_code == 0
+
+    def test_ip_address_domain_rejected(self, monkeypatch, tmp_path):
+        result = self._invoke_with_domain(monkeypatch, tmp_path, "192.168.1.1")
+        assert result.exit_code != 0
+        assert "Invalid" in result.output or "domain" in result.output.lower()
+
+    def test_internal_hostname_rejected(self, monkeypatch, tmp_path):
+        result = self._invoke_with_domain(monkeypatch, tmp_path, "internal-server.corp.net")
+        assert result.exit_code != 0
+
+    def test_haravan_without_subdomain_rejected(self, monkeypatch, tmp_path):
+        result = self._invoke_with_domain(monkeypatch, tmp_path, "myharavan.com")
+        assert result.exit_code != 0
+
+    def test_localhost_rejected(self, monkeypatch, tmp_path):
+        result = self._invoke_with_domain(monkeypatch, tmp_path, "localhost")
+        assert result.exit_code != 0
+
+
 class TestCredsSetCommand:
     def test_creds_set_haravan_encrypts_and_stores(self, tmp_path, monkeypatch):
         import json
