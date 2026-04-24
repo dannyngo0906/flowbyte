@@ -257,7 +257,7 @@ class SyncResult(BaseModel):
     pipeline: str
     resource: str
     mode: str
-    status: str
+    status: str = ""
     fetched_count: int = 0
     upserted_count: int = 0
     skipped_invalid: int = 0

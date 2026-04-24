@@ -18,7 +18,11 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "haravan"
 def pg_container():
     with PostgresContainer("postgres:14-alpine") as pg:
         # Enable pgcrypto for gen_random_uuid()
-        engine = create_engine(pg.get_connection_url())
+        raw_url = pg.get_connection_url()
+        sa_url = (raw_url
+                  .replace("postgresql+psycopg2://", "postgresql+psycopg://")
+                  .replace("postgresql://", "postgresql+psycopg://"))
+        engine = create_engine(sa_url)
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         yield pg
@@ -27,16 +31,19 @@ def pg_container():
 @pytest.fixture(scope="session")
 def internal_engine(pg_container):
     """Session-scoped engine with schema migrated to head."""
-    import subprocess
     import os
+    import subprocess
+    import sys
 
-    url = pg_container.get_connection_url()
-    # Replace psycopg2:// with psycopg+psycopg:// for SA 2.0
-    sa_url = url.replace("postgresql://", "postgresql+psycopg://")
+    raw_url = pg_container.get_connection_url()
+    sa_url = (raw_url
+              .replace("postgresql+psycopg2://", "postgresql+psycopg://")
+              .replace("postgresql://", "postgresql+psycopg://"))
     env = {**os.environ, "FLOWBYTE_DB_URL": sa_url}
 
+    alembic_bin = str(Path(sys.executable).parent / "alembic")
     subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [alembic_bin, "upgrade", "head"],
         env=env,
         check=True,
         cwd=Path(__file__).parent.parent.parent,
@@ -47,8 +54,10 @@ def internal_engine(pg_container):
 @pytest.fixture(scope="session")
 def dest_engine(pg_container):
     """Separate engine for destination DB (same PG instance, different schema)."""
-    url = pg_container.get_connection_url()
-    sa_url = url.replace("postgresql://", "postgresql+psycopg://")
+    raw_url = pg_container.get_connection_url()
+    sa_url = (raw_url
+              .replace("postgresql+psycopg2://", "postgresql+psycopg://")
+              .replace("postgresql://", "postgresql+psycopg://"))
     engine = create_engine(sa_url)
 
     # Create destination tables

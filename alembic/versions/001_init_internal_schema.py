@@ -44,7 +44,7 @@ def upgrade() -> None:
     # ── sync_requests ─────────────────────────────────────────────────────────
     op.create_table(
         "sync_requests",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"),
+        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("pipeline", sa.String(32), nullable=False),
         sa.Column("resource", sa.String(32)),
         sa.Column("mode", sa.String(16), nullable=False, server_default="'incremental'"),
@@ -69,7 +69,7 @@ def upgrade() -> None:
     # ── sync_logs ─────────────────────────────────────────────────────────────
     op.create_table(
         "sync_logs",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"),
+        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False, server_default="NOW()"),
         sa.Column("level", sa.String(16), nullable=False),
         sa.Column("event", sa.String(64), nullable=False),
@@ -133,7 +133,7 @@ def upgrade() -> None:
     # ── validation_results ────────────────────────────────────────────────────
     op.create_table(
         "validation_results",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"),
+        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("sync_id", UUID(as_uuid=True), nullable=False),
         sa.Column("pipeline", sa.String(32), nullable=False),
         sa.Column("resource", sa.String(32), nullable=False),
