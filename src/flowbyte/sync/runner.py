@@ -1,0 +1,297 @@
+"""SyncRunner: orchestrates Extract → Transform → Load for one resource."""
+from __future__ import annotations
+
+import time
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Engine
+
+from flowbyte.config.models import PipelineConfig, SyncJobSpec, SyncResult
+from flowbyte.db.destination_schema import get_table
+from flowbyte.db.internal_schema import sync_runs
+from flowbyte.haravan.client import HaravanClient
+from flowbyte.haravan.exceptions import InvalidRecordError
+from flowbyte.logging import EventName, get_logger
+from flowbyte.sync.checkpoint import compute_watermark, load_checkpoint, save_checkpoint
+from flowbyte.sync.load import LoadStats, count_active_rows, sweep_soft_deletes, upsert_batch
+from flowbyte.sync.transform import apply_transform
+
+log = get_logger()
+
+_SOFT_DELETE_SANITY_MAX_PCT = 5.0
+
+
+class SyncRunner:
+    def __init__(
+        self,
+        pipeline_config: PipelineConfig,
+        haravan_client: HaravanClient,
+        internal_engine: Engine,
+        dest_engine: Engine,
+    ) -> None:
+        self._cfg = pipeline_config
+        self._haravan = haravan_client
+        self._internal = internal_engine
+        self._dest = dest_engine
+
+    def run(self, spec: SyncJobSpec) -> SyncResult:
+        sync_id = spec.sync_id or str(uuid4())
+        started_at = datetime.now(timezone.utc)
+        bound_log = log.bind(sync_id=sync_id, pipeline=spec.pipeline, resource=spec.resource)
+
+        bound_log.info(EventName.SYNC_STARTED, mode=spec.mode, trigger=spec.trigger)
+        self._record_run_start(sync_id, spec, started_at)
+
+        result = SyncResult(
+            sync_id=sync_id,
+            pipeline=spec.pipeline,
+            resource=spec.resource,
+            mode=spec.mode,
+        )
+
+        try:
+            if spec.resource == "inventory_levels":
+                self._sync_inventory_levels(spec, sync_id, result)
+            elif spec.resource == "locations":
+                self._sync_locations(spec, sync_id, result)
+            elif spec.resource in ("products", "variants"):
+                self._sync_products_and_variants(spec, sync_id, result)
+            else:
+                self._sync_incremental_resource(spec, sync_id, result)
+
+            result.status = "success"
+            bound_log.info(
+                EventName.SYNC_COMPLETED,
+                fetched=result.fetched_count,
+                upserted=result.upserted_count,
+                skipped=result.skipped_invalid,
+                duration=round(time.time() - started_at.timestamp(), 2),
+            )
+        except Exception as e:
+            result.status = "failed"
+            result.error = str(e)
+            bound_log.error(EventName.SYNC_FAILED, error=str(e), exc_info=True)
+        finally:
+            result.duration_seconds = round(time.time() - started_at.timestamp(), 2)
+            self._record_run_finish(sync_id, result)
+
+        return result
+
+    # ── Resource-specific sync strategies ─────────────────────────────────────
+
+    def _sync_incremental_resource(
+        self, spec: SyncJobSpec, sync_id: str, result: SyncResult
+    ) -> None:
+        table = get_table(spec.resource)
+        resource_cfg = self._cfg.resources[spec.resource]
+        transform_cfg = resource_cfg.transform
+
+        with self._internal.begin() as int_conn:
+            checkpoint = load_checkpoint(int_conn, spec.pipeline, spec.resource)
+
+        # First sync ever → full refresh, then switch to incremental
+        effective_mode = spec.mode
+        if checkpoint is None and spec.mode == "incremental":
+            effective_mode = "full_refresh"
+            log.info(EventName.CHECKPOINT_LOADED, reason="first_sync_switching_to_full_refresh")
+
+        records_raw: list[dict] = []
+        from flowbyte.haravan.resources.orders import extract_orders
+        from flowbyte.haravan.resources.customers import extract_customers
+
+        extractors = {
+            "orders": extract_orders,
+            "customers": extract_customers,
+        }
+        extractor = extractors.get(spec.resource)
+        if extractor is None:
+            raise NotImplementedError(f"No extractor for resource {spec.resource!r}")
+
+        for raw in extractor(self._haravan, checkpoint, effective_mode):
+            records_raw.append(raw)
+
+        transformed, skipped = self._transform_batch(records_raw, transform_cfg, spec.resource)
+        result.fetched_count = len(records_raw)
+        result.skipped_invalid = skipped
+
+        with self._dest.connect() as dest_conn:
+            result.rows_before = count_active_rows(dest_conn, table)
+
+        with self._dest.begin() as dest_conn:
+            stats = upsert_batch(dest_conn, table, transformed, sync_id)
+            result.upserted_count = stats.upserted
+
+            if effective_mode == "full_refresh":
+                self._run_soft_delete_sweep(dest_conn, table, sync_id, result)
+
+        with self._dest.connect() as dest_conn:
+            result.rows_after = count_active_rows(dest_conn, table)
+
+        # Checkpoint saved AFTER destination commit (invariant §8.3)
+        watermark = compute_watermark(transformed)
+        with self._internal.begin() as int_conn:
+            save_checkpoint(int_conn, spec.pipeline, spec.resource, watermark, sync_id)
+
+    def _sync_products_and_variants(
+        self, spec: SyncJobSpec, sync_id: str, result: SyncResult
+    ) -> None:
+        from flowbyte.haravan.resources.products import extract_products_and_variants
+
+        resource_cfg = self._cfg.resources.get("products", self._cfg.resources.get(spec.resource))
+        transform_cfg = resource_cfg.transform if resource_cfg else None
+
+        with self._internal.begin() as int_conn:
+            checkpoint = load_checkpoint(int_conn, spec.pipeline, "products")
+
+        effective_mode = spec.mode
+        if checkpoint is None and spec.mode == "incremental":
+            effective_mode = "full_refresh"
+
+        products_iter, variants_iter = extract_products_and_variants(
+            self._haravan, checkpoint, effective_mode
+        )
+
+        products_raw = list(products_iter)
+        variants_raw = list(variants_iter)
+
+        products_transformed, p_skipped = self._transform_batch(
+            products_raw, transform_cfg, "products"
+        )
+        variants_transformed, v_skipped = self._transform_batch(
+            variants_raw, None, "variants"
+        )
+
+        result.fetched_count = len(products_raw) + len(variants_raw)
+        result.skipped_invalid = p_skipped + v_skipped
+
+        with self._dest.begin() as dest_conn:
+            p_stats = upsert_batch(dest_conn, get_table("products"), products_transformed, sync_id)
+            v_stats = upsert_batch(dest_conn, get_table("variants"), variants_transformed, sync_id)
+            result.upserted_count = p_stats.upserted + v_stats.upserted
+
+        watermark = compute_watermark(products_transformed)
+        with self._internal.begin() as int_conn:
+            save_checkpoint(int_conn, spec.pipeline, "products", watermark, sync_id)
+            save_checkpoint(int_conn, spec.pipeline, "variants", watermark, sync_id)
+
+    def _sync_inventory_levels(
+        self, spec: SyncJobSpec, sync_id: str, result: SyncResult
+    ) -> None:
+        from flowbyte.haravan.resources.inventory import extract_inventory_levels
+
+        location_ids = self._get_location_ids()
+        table = get_table("inventory_levels")
+
+        records_raw = list(extract_inventory_levels(self._haravan, location_ids))
+        transformed, skipped = self._transform_batch(records_raw, None, "inventory_levels")
+        result.fetched_count = len(records_raw)
+        result.skipped_invalid = skipped
+
+        with self._dest.begin() as dest_conn:
+            stats = upsert_batch(
+                dest_conn, table, transformed, sync_id,
+                primary_key=["inventory_item_id", "location_id"],
+            )
+            result.upserted_count = stats.upserted
+
+    def _sync_locations(
+        self, spec: SyncJobSpec, sync_id: str, result: SyncResult
+    ) -> None:
+        from flowbyte.haravan.resources.locations import extract_locations
+
+        table = get_table("locations")
+        records_raw = list(extract_locations(self._haravan))
+        transformed, skipped = self._transform_batch(records_raw, None, "locations")
+        result.fetched_count = len(records_raw)
+        result.skipped_invalid = skipped
+
+        with self._dest.begin() as dest_conn:
+            stats = upsert_batch(dest_conn, table, transformed, sync_id)
+            result.upserted_count = stats.upserted
+
+            self._run_soft_delete_sweep(dest_conn, table, sync_id, result)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _transform_batch(
+        self,
+        records: list[dict],
+        transform_cfg,
+        resource: str,
+    ) -> tuple[list[dict], int]:
+        from flowbyte.config.models import TransformConfig
+
+        cfg = transform_cfg or TransformConfig()
+        transformed = []
+        skipped = 0
+        for r in records:
+            try:
+                t = apply_transform(r, cfg, resource)
+                transformed.append(t)
+            except InvalidRecordError as e:
+                skipped += 1
+                log.warning(EventName.RECORD_SKIPPED, resource=resource, error=str(e))
+        return transformed, skipped
+
+    def _run_soft_delete_sweep(
+        self, dest_conn, table, sync_id: str, result: SyncResult
+    ) -> None:
+        rows_before = count_active_rows(dest_conn, table)
+        would_delete = rows_before - result.fetched_count
+        if rows_before > 0:
+            delete_pct = would_delete / rows_before * 100
+            if delete_pct > _SOFT_DELETE_SANITY_MAX_PCT:
+                log.critical(
+                    EventName.SOFT_DELETE_SWEEP_ABORTED,
+                    delete_pct=round(delete_pct, 2),
+                    rows_before=rows_before,
+                    fetched=result.fetched_count,
+                )
+                return
+
+        swept = sweep_soft_deletes(dest_conn, table, sync_id)
+        result.soft_deleted_count = swept
+        log.info(EventName.SOFT_DELETE_SWEEP_DONE, swept=swept)
+
+    def _get_location_ids(self) -> list[int]:
+        from flowbyte.haravan.resources.locations import extract_locations
+
+        return [loc["id"] for loc in extract_locations(self._haravan) if loc.get("id")]
+
+    def _record_run_start(
+        self, sync_id: str, spec: SyncJobSpec, started_at: datetime
+    ) -> None:
+        with self._internal.begin() as conn:
+            conn.execute(
+                pg_insert(sync_runs).values(
+                    sync_id=sync_id,
+                    pipeline=spec.pipeline,
+                    resource=spec.resource,
+                    mode=spec.mode,
+                    trigger=spec.trigger,
+                    request_id=spec.request_id,
+                    started_at=started_at,
+                    status="running",
+                ).on_conflict_do_nothing()
+            )
+
+    def _record_run_finish(self, sync_id: str, result: SyncResult) -> None:
+        with self._internal.begin() as conn:
+            conn.execute(
+                sync_runs.update()
+                .where(sync_runs.c.sync_id == sync_id)
+                .values(
+                    finished_at=datetime.now(timezone.utc),
+                    status=result.status,
+                    fetched_count=result.fetched_count,
+                    upserted_count=result.upserted_count,
+                    skipped_invalid=result.skipped_invalid,
+                    soft_deleted_count=result.soft_deleted_count,
+                    rows_before=result.rows_before,
+                    rows_after=result.rows_after,
+                    duration_seconds=result.duration_seconds,
+                    error=result.error,
+                )
+            )
