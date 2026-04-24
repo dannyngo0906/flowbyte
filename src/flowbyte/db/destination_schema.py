@@ -151,6 +151,7 @@ variants = Table(
     Column("compare_at_price", Numeric(12, 2)),
     Column("inventory_item_id", BigInteger),
     Column("inventory_quantity", Integer),
+    Column("inventory_advance", JSONB),
     Column("created_at", DateTime(timezone=True)),
     Column("updated_at", DateTime(timezone=True)),
     Column("_raw", JSONB, nullable=False),

@@ -13,8 +13,10 @@ def extract_customers(
     mode: str,
 ) -> Iterator[dict]:
     params: dict = {"order": "updated_at asc, id asc"}
+    paginate_checkpoint = None
     if mode == "incremental" and checkpoint:
         last_ts, _ = checkpoint
         params["updated_at_min"] = (last_ts - timedelta(minutes=5)).isoformat()
+        paginate_checkpoint = checkpoint
 
-    yield from client.paginate("customers", params=params, page_size=250, checkpoint=checkpoint)
+    yield from client.paginate("customers", params=params, page_size=250, checkpoint=paginate_checkpoint)

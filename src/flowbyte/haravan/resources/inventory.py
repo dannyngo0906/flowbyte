@@ -15,4 +15,5 @@ def extract_inventory_levels(
             "inventory_levels",
             params={"location_ids": str(loc_id)},
             page_size=250,
+            url_suffix="",
         )

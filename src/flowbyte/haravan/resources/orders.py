@@ -13,15 +13,15 @@ def extract_orders(
     mode: str,
 ) -> Iterator[dict]:
     params: dict = {"order": "updated_at asc, id asc"}
-    last_ts, last_id = checkpoint if checkpoint else (None, 0)
-
-    if mode == "incremental" and last_ts:
-        # 5-min look-back overlap to catch records delayed between extract/load
+    paginate_checkpoint = None
+    if mode == "incremental" and checkpoint:
+        last_ts, _ = checkpoint
         params["updated_at_min"] = (last_ts - timedelta(minutes=5)).isoformat()
+        paginate_checkpoint = checkpoint
 
     yield from client.paginate(
         "orders",
         params=params,
         page_size=250,
-        checkpoint=checkpoint,
+        checkpoint=paginate_checkpoint,
     )

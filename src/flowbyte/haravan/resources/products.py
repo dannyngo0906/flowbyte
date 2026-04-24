@@ -17,11 +17,13 @@ def extract_products_and_variants(
     variants_buf: list[dict] = []
 
     params: dict = {"order": "updated_at asc, id asc"}
+    paginate_checkpoint = None
     if mode == "incremental" and checkpoint:
         last_ts, _ = checkpoint
         params["updated_at_min"] = (last_ts - timedelta(minutes=5)).isoformat()
+        paginate_checkpoint = checkpoint
 
-    for product in client.paginate("products", params=params, page_size=250, checkpoint=checkpoint):
+    for product in client.paginate("products", params=params, page_size=250, checkpoint=paginate_checkpoint):
         # Separate out variants before yielding product
         product_copy = {k: v for k, v in product.items() if k != "variants"}
         products_buf.append(product_copy)

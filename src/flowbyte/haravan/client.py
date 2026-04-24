@@ -65,16 +65,21 @@ class HaravanClient:
         params: dict[str, Any] | None = None,
         page_size: int = 250,
         checkpoint: tuple[datetime, int] | None = None,
+        url_suffix: str = ".json",
     ) -> Iterator[dict]:
         """Keyset pagination with composite cursor (updated_at, id).
 
         Yields records one at a time, stable under concurrent source writes.
+        url_suffix: set to "" for endpoints that don't accept .json (e.g. inventory_levels).
         """
         p = {**(params or {}), "limit": page_size}
         last_ts, last_id = checkpoint or (None, 0)
 
         while True:
-            response = self._request_with_retry("GET", f"/{resource}.json", params=p)
+            response = self._request_with_retry("GET", f"/{resource}{url_suffix}", params=p)
+            body = response.text.strip()
+            if not body:
+                return
             records: list[dict] = response.json().get(resource, [])
             if not records:
                 return

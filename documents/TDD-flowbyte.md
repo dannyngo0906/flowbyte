@@ -514,7 +514,7 @@ class Reconciler:
   - `GET /orders/count.json` (for validation — optional, phase 2)
   - `GET /customers.json?updated_at_min=...`
   - `GET /products.json?updated_at_min=...` (nested `variants[]` trong payload)
-  - `GET /inventory_levels.json?location_ids=...`
+  - ~~`GET /inventory_levels.json?location_ids=...`~~ ❌ **KHÔNG TỒN TẠI trong Haravan** — trả 404 với `.json`, trả 200 + empty body không có `.json`. Inventory data được embed trong `variants[].inventory_advance` (field JSONB với `qty_available`, `qty_onhand`, `qty_commited`, `qty_incoming`). Resource `inventory_levels` bị disable trong pipeline YAML. Column `inventory_advance JSONB` thêm vào bảng `variants`.
   - `GET /locations.json`
 - Response header: `X-Haravan-Api-Call-Limit: {used}/80`
 
@@ -564,6 +564,8 @@ class HaravanTokenBucket:
 **💡 Tại sao sync từ header:** Client-side local counter drift theo thời gian (clock, concurrent shop admins); header là ground truth → đồng bộ về 0 lỗi.
 
 ### 7.3 HaravanClient
+
+> ⚠️ **E2E verified 2026-04-24 — Bug #4:** Trong các extractor (orders/customers/products), `checkpoint` luôn được truyền vào `paginate()` dù mode là `full_refresh`. Kết quả: dedup logic trong `paginate()` skip toàn bộ records đã tồn tại trong checkpoint → full refresh fetch 0 records. **Fix:** Chỉ truyền `checkpoint` vào `paginate()` khi `mode == "incremental"`. Trong full_refresh, `paginate_checkpoint = None`.
 
 > ⚠️ **AMENDED v1.1 → §17.5, §17.7:** `paginate()` page-based bên dưới bị thay bằng **keyset pagination với composite cursor** `(last_updated_at, last_id)` để tránh silent data skip khi source thay đổi mid-pagination. Thêm **cold start prime** gọi `/shop.json` để sync bucket trước request đầu. Header parse phải **robust regex** không crash khi format lạ. Đọc §17.5 & §17.7 trước khi implement.
 
@@ -1947,5 +1949,6 @@ Go-live gate:
 | Ngày | Version | Thay đổi |
 |---|---|---|
 | 2026-04-24 | v1 | TDD đầu tiên; 16 sections theo khung OPA + 8 kiến trúc đã chốt + dòng "💡 Tại sao" mỗi section lớn |
-| 2026-04-24 | **1.2** | **E2E verified với Haravan API thật:** (1) Auth header đổi toàn bộ từ `X-Haravan-Access-Token` → `Authorization: Bearer` (§7.1, §7.3, cold start prime) — Haravan Omnichannel thực tế dùng Bearer auth, không phải header trong docs cũ; (2) `orders.order_number` Haravan trả `"#85983"` (string có prefix `#`) → kiểu phải là `VARCHAR/TEXT`, không phải `INTEGER`. Cả hai lỗi chỉ phát hiện qua E2E, unit test không bắt được. |
+| 2026-04-24 | **v1.3** | **E2E hoàn thành 5/5 resources:** (3) `inventory_levels` endpoint Haravan không tồn tại — `/inventory_levels.json` → 404, `/inventory_levels` → 200+empty body. Inventory data embed trong `variants[].inventory_advance` JSONB; resource disabled, thêm column `inventory_advance JSONB` vào bảng `variants`, cập nhật §7.1; (4) Bug full_refresh checkpoint: extractor pass checkpoint vào `paginate()` dù mode=full_refresh → dedup skip toàn bộ records → fix `paginate_checkpoint=None` khi mode≠incremental, cập nhật §7.3. |
+| 2026-04-24 | **v1.2** | **E2E verified với Haravan API thật:** (1) Auth header đổi toàn bộ từ `X-Haravan-Access-Token` → `Authorization: Bearer` (§7.1, §7.3, cold start prime) — Haravan Omnichannel thực tế dùng Bearer auth, không phải header trong docs cũ; (2) `orders.order_number` Haravan trả `"#85983"` (string có prefix `#`) → kiểu phải là `VARCHAR/TEXT`, không phải `INTEGER`. Cả hai lỗi chỉ phát hiện qua E2E, unit test không bắt được. |
 | 2026-04-24 | 1.1 | Senior review — 11 amendments §17: full-refresh `_sync_id` marker, bootstrap non-root, timezone config, sync_request recovery, keyset pagination, async log sink, schedule stagger, validation rules v2, migration safety, built-in backup + DR, Prometheus observability |

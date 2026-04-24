@@ -70,7 +70,7 @@ _FLATTENING_RULES: dict[str, dict] = {
             "inventory_item_id", "inventory_quantity", "created_at", "updated_at",
         ],
         "nested_flatten": {},
-        "nested_jsonb": [],
+        "nested_jsonb": ["inventory_advance"],
         "nested_prefix": {},
     },
     "inventory_levels": {
