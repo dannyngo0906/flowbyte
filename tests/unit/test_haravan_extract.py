@@ -102,6 +102,63 @@ class TestExtractOrders:
         assert client.paginate.call_args[1]["checkpoint"] is None
 
 
+# ── extract_inventory_levels (inventory_locations endpoint) ──────────────────
+
+
+from flowbyte.haravan.resources.inventory import extract_inventory_levels
+
+
+def _make_inv_client(response: dict | None = None) -> MagicMock:
+    client = MagicMock()
+    client.get.return_value = response or {"inventory_locations": []}
+    return client
+
+
+class TestExtractInventoryLocations:
+    def test_no_call_if_location_ids_empty(self):
+        client = _make_inv_client()
+        records = list(extract_inventory_levels(client, [], [10001]))
+        client.get.assert_not_called()
+        assert records == []
+
+    def test_no_call_if_variant_ids_empty(self):
+        client = _make_inv_client()
+        records = list(extract_inventory_levels(client, [501], []))
+        client.get.assert_not_called()
+        assert records == []
+
+    def test_calls_correct_endpoint(self):
+        client = _make_inv_client()
+        list(extract_inventory_levels(client, [501], [10001]))
+        client.get.assert_called_once()
+        path_arg = client.get.call_args[0][0]
+        assert path_arg == "/inventory_locations.json"
+
+    def test_location_ids_passed_as_comma_string(self):
+        client = _make_inv_client()
+        list(extract_inventory_levels(client, [501, 502], [10001]))
+        params = client.get.call_args[1]["params"]
+        assert params["location_ids"] == "501,502"
+
+    def test_variant_ids_batched_by_200(self):
+        client = _make_inv_client()
+        variant_ids = list(range(1, 202))  # 201 variant IDs → 2 batches
+        list(extract_inventory_levels(client, [501], variant_ids))
+        assert client.get.call_count == 2
+
+    def test_yields_from_inventory_locations_key(self):
+        r1 = {"inventory_item_id": 1001, "location_id": 501, "available": 10}
+        r2 = {"inventory_item_id": 1002, "location_id": 501, "available": 5}
+        client = _make_inv_client({"inventory_locations": [r1, r2]})
+        records = list(extract_inventory_levels(client, [501], [10001]))
+        assert records == [r1, r2]
+
+    def test_missing_key_yields_nothing(self):
+        client = _make_inv_client({})
+        records = list(extract_inventory_levels(client, [501], [10001]))
+        assert records == []
+
+
 # ── extract_customers ────────────────────────────────────────────────────────
 
 

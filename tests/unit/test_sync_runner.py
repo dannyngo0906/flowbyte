@@ -280,3 +280,44 @@ class TestSyncRunnerResultStatus:
 
         assert result.status == "success"
         assert result.resource == "customers"
+
+
+# ── TestSyncRunnerInventoryLevels ─────────────────────────────────────────────
+
+_SAMPLE_INVENTORY = {
+    "inventory_item_id": 1001,
+    "location_id": 501,
+    "available": 10,
+    "updated_at": "2026-01-01T00:00:00+00:00",
+}
+
+
+class TestSyncRunnerInventoryLevels:
+    def test_skips_gracefully_when_no_variant_ids(self):
+        """_get_variant_ids() returns [] → extract not called, status success, fetched=0."""
+        with _runner_patches() as m, \
+             patch("flowbyte.sync.runner.SyncRunner._get_location_ids", return_value=[501]), \
+             patch("flowbyte.sync.runner.SyncRunner._get_variant_ids", return_value=[]):
+            m["upsert_batch"].return_value = LoadStats()
+            m["count_active_rows"].return_value = 0
+
+            result = _make_runner().run(_make_spec("inventory_levels", "full_refresh"))
+
+        assert result.status == "success"
+        assert result.fetched_count == 0
+        m["upsert_batch"].assert_not_called()
+
+    def test_inventory_sync_success_with_variants(self):
+        """variant_ids non-empty → extract called, upsert called, status success."""
+        with _runner_patches() as m, \
+             patch("flowbyte.sync.runner.SyncRunner._get_location_ids", return_value=[501]), \
+             patch("flowbyte.sync.runner.SyncRunner._get_variant_ids", return_value=[10001]), \
+             patch("flowbyte.haravan.resources.inventory.extract_inventory_levels",
+                   side_effect=lambda *a, **kw: iter([_SAMPLE_INVENTORY])):
+            m["upsert_batch"].return_value = LoadStats(upserted=1)
+            m["count_active_rows"].return_value = 0
+
+            result = _make_runner().run(_make_spec("inventory_levels", "full_refresh"))
+
+        assert result.status == "success"
+        assert result.fetched_count == 1

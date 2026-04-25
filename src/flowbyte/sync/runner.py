@@ -184,9 +184,14 @@ class SyncRunner:
         from flowbyte.haravan.resources.inventory import extract_inventory_levels
 
         location_ids = self._get_location_ids()
+        variant_ids = self._get_variant_ids()
+        if not variant_ids:
+            log.warning("sync.skipped", resource="inventory_levels", reason="no_variant_ids")
+            return
+
         table = get_table("inventory_levels")
 
-        records_raw = list(extract_inventory_levels(self._haravan, location_ids))
+        records_raw = list(extract_inventory_levels(self._haravan, location_ids, variant_ids))
         transformed, skipped = self._transform_batch(records_raw, "inventory_levels")
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
@@ -274,6 +279,22 @@ class SyncRunner:
         from flowbyte.haravan.resources.locations import extract_locations
 
         return [loc["id"] for loc in extract_locations(self._haravan) if loc.get("id")]
+
+    def _get_variant_ids(self) -> list[int]:
+        from sqlalchemy import text
+
+        try:
+            with self._dest.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT DISTINCT CAST(v->>'id' AS BIGINT) "
+                    "FROM products, jsonb_array_elements(_raw->'variants') AS v "
+                    "WHERE _deleted_at IS NULL AND v->>'id' IS NOT NULL"
+                )).all()
+            return [r[0] for r in rows if r[0]]
+        except Exception as e:
+            log.warning("sync.skipped", resource="inventory_levels",
+                        reason="variant_ids_query_failed", error=str(e))
+            return []
 
     def _run_validation(self, result: SyncResult) -> None:
         try:

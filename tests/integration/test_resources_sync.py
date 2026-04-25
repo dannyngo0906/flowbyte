@@ -308,7 +308,16 @@ class TestInventoryLevelsSync:
         with internal_engine.begin() as conn:
             conn.execute(text("TRUNCATE sync_checkpoints, sync_runs CASCADE"))
         with dest_engine.begin() as conn:
-            conn.execute(text("TRUNCATE inventory_levels CASCADE"))
+            conn.execute(text("TRUNCATE inventory_levels, products CASCADE"))
+        # Seed 1 product with variant so _get_variant_ids() → [10001]
+        with dest_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO products (id, updated_at, _raw, _synced_at) "
+                    "VALUES (1, NOW(), CAST(:raw AS jsonb), NOW())"
+                ),
+                {"raw": '{"variants":[{"id":10001}]}'},
+            )
         yield
 
     def _runner(
@@ -318,11 +327,16 @@ class TestInventoryLevelsSync:
         inventory_records: list[dict],
         location_ids: list[int] | None = None,
     ) -> SyncRunner:
-        """Mock client.get for locations + client.paginate for inventory_levels."""
+        """Mock client.get for locations + inventory_locations endpoint."""
         loc_ids = location_ids or [501]
         client = MagicMock()
-        client.get.return_value = {"locations": [{"id": lid} for lid in loc_ids]}
-        client.paginate.return_value = iter(inventory_records)
+
+        def mock_get(path, **kwargs):
+            if "inventory_locations" in path:
+                return {"inventory_locations": inventory_records}
+            return {"locations": [{"id": lid} for lid in loc_ids]}
+
+        client.get.side_effect = mock_get
         return SyncRunner(_make_cfg(), client, internal_engine, dest_engine)
 
     def test_full_refresh_inserts_inventory_levels(self, internal_engine, dest_engine):
@@ -362,9 +376,9 @@ class TestInventoryLevelsSync:
 
         with dest_engine.connect() as conn:
             row = conn.execute(
-                text("SELECT available FROM inventory_levels WHERE inventory_item_id=1001")
+                text("SELECT (_raw->>'available')::int FROM inventory_levels WHERE inventory_item_id=1001")
             ).one()
-        assert row.available == 99
+        assert row[0] == 99
 
 
 # ── TestLocationsSync ─────────────────────────────────────────────────────────
