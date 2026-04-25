@@ -327,10 +327,16 @@ def _load_credentials(engine: Engine, ref: str) -> dict:
 
 
 def _build_dest_url(cfg: PipelineConfig, pg_creds: dict) -> str:
+    from sqlalchemy.engine import URL
     d = cfg.destination
-    password = _urlquote(pg_creds.get("password", ""), safe="")
-    user = _urlquote(d.user, safe="")
-    return f"postgresql+psycopg://{user}:{password}@{d.host}:{d.port}/{d.database}"
+    return str(URL.create(
+        "postgresql+psycopg",
+        username=d.user,
+        password=pg_creds.get("password", ""),
+        host=d.host,
+        port=d.port,
+        database=d.database,
+    ))
 
 
 def _get_timezone(cfg: PipelineConfig):

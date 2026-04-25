@@ -6,6 +6,7 @@ import time
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from flowbyte.config.models import PHASE_1_RESOURCES
 
@@ -79,7 +80,7 @@ def run(
             if row.status == "done":
                 console.print(f"[green]✓ Sync done.[/green]")
             else:
-                console.print(f"[red]✗ Sync {row.status}: {row.error}[/red]")
+                console.print(f"[red]✗ Sync {row.status}: {escape(str(row.error or ''))}[/red]")
                 raise typer.Exit(1)
             return
 

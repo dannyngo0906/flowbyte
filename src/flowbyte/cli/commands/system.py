@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 app = typer.Typer()
 console = Console()
@@ -24,7 +25,7 @@ def health(strict: bool = typer.Option(False, "--strict")):
     try:
         engine = get_internal_engine(settings.db_url)
     except Exception as e:
-        console.print(f"[red]✗ DB unreachable: {e}[/red]")
+        console.print(f"[red]✗ DB unreachable: {escape(str(e))}[/red]")
         raise typer.Exit(3)
 
     checks: dict[str, bool] = {}

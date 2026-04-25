@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from flowbyte.config.loader import PIPELINE_TEMPLATE, load_global_config, load_pipeline_config
@@ -128,13 +129,14 @@ def validate(name: str = typer.Argument(...)):
         creds = _load_credentials(engine, cfg.haravan_credentials_ref)
         client = HaravanClient(cfg.haravan_shop_domain, creds["access_token"], HaravanTokenBucket())
         shop = client.test_connection()
-        console.print(f"[green]✓ OK[/green] (shop: {shop.get('shop', {}).get('name', 'unknown')})")
+        shop_name = shop.get("shop", {}).get("name", "unknown")
+        console.print(f"[green]✓ OK[/green] (shop: {escape(shop_name)})")
     except HaravanAuthError:
         console.print("[red]✗ FAILED[/red]: 401/403 Unauthorized")
         console.print("  Hint: Check access token at Haravan Admin → Apps → Private apps")
         raise typer.Exit(3)
     except Exception as e:
-        console.print(f"[red]✗ FAILED[/red]: {e}")
+        console.print(f"[red]✗ FAILED[/red]: {escape(str(e))}")
         raise typer.Exit(1)
 
     # Test Postgres destination
@@ -151,7 +153,7 @@ def validate(name: str = typer.Argument(...)):
             conn.execute(text("SELECT 1"))
         console.print("[green]✓ OK[/green]")
     except Exception as e:
-        console.print(f"[red]✗ FAILED[/red]: {e}")
+        console.print(f"[red]✗ FAILED[/red]: {escape(str(e))}")
         console.print("  Hint: check host, port, user, database and pg_hba.conf/firewall")
         raise typer.Exit(1)
 
@@ -258,7 +260,7 @@ def creds(
     elif action == "delete":
         _creds_delete(ref)
     else:
-        console.print(f"[red]Unknown action: {action}[/red]")
+        console.print(f"[red]Unknown action: {escape(action)}[/red]")
         raise typer.Exit(2)
 
 
@@ -330,7 +332,7 @@ def _creds_set(ref: str, kind: str) -> None:
         password = getpass.getpass("Postgres password: ")
         plaintext = json.dumps({"password": password})
     else:
-        console.print(f"[red]Unknown kind: {kind}[/red]")
+        console.print(f"[red]Unknown kind: {escape(kind)}[/red]")
         raise typer.Exit(2)
 
     master_key = MasterKey.load(settings.master_key_path)
@@ -348,7 +350,7 @@ def _creds_set(ref: str, kind: str) -> None:
             )
         )
 
-    console.print(f"[green]✓ Credentials saved as '{ref}' (kind={kind})[/green]")
+    console.print(f"[green]✓ Credentials saved as '{escape(ref)}' (kind={escape(kind)})[/green]")
 
 
 def _creds_list() -> None:
@@ -384,4 +386,4 @@ def _creds_delete(ref: str) -> None:
     engine = get_internal_engine(settings.db_url)
     with engine.begin() as conn:
         conn.execute(sql_delete(credentials).where(credentials.c.ref == ref))
-    console.print(f"[green]✓ Credentials '{ref}' deleted.[/green]")
+    console.print(f"[green]✓ Credentials '{escape(ref)}' deleted.[/green]")

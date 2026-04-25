@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 app = typer.Typer()
 console = Console()
@@ -14,7 +15,7 @@ def alert(action: str = typer.Argument(..., help="test")):
     if action == "test":
         _alert_test()
     else:
-        console.print(f"[red]Unknown action: {action}[/red]")
+        console.print(f"[red]Unknown action: {escape(action)}[/red]")
         raise typer.Exit(2)
 
 
@@ -40,6 +41,6 @@ def _alert_test() -> None:
         # Mask bot_token in error message before printing to terminal.
         tok_id = raw_token.split(":")[0] if ":" in raw_token else "***"
         safe_msg = str(e).replace(raw_token, f"{tok_id}:***")
-        console.print(f"[red]✗ Failed to send Telegram alert: {safe_msg}[/red]")
+        console.print(f"[red]✗ Failed to send Telegram alert: {escape(safe_msg)}[/red]")
         console.print("  Check: bot_token, chat_id, and outbound HTTPS to api.telegram.org")
         raise typer.Exit(1)
