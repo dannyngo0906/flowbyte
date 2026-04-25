@@ -8,6 +8,7 @@ from flowbyte.cli.commands import (
     pipeline,
     sync as sync_cmd,
     system,
+    verify as verify_cmd,
 )
 
 app = typer.Typer(
@@ -25,6 +26,7 @@ app.add_typer(sync_cmd.app, name="")
 app.add_typer(observability.app, name="")
 app.add_typer(alerting.app, name="")
 app.add_typer(system.app, name="")
+app.add_typer(verify_cmd.app, name="")
 
 
 def main() -> None:

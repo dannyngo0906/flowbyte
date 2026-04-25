@@ -116,6 +116,11 @@ class HaravanClient:
         response = self._request_with_retry("GET", path, params=params)
         return response.json()
 
+    def get_count(self, resource: str, params: dict[str, Any] | None = None) -> int:
+        """Fetch record count from Haravan /{resource}/count.json."""
+        data = self.get(f"/{resource}/count.json", params=params)
+        return int(data.get("count", 0))
+
     def test_connection(self) -> dict:
         """Call /shop.json to verify credentials. Returns shop info."""
         return self.get("/shop.json")
