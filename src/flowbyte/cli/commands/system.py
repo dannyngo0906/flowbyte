@@ -73,9 +73,11 @@ def cleanup(dry_run: bool = typer.Option(False, "--dry-run")):
     if dry_run:
         stats = dry_run_cleanup(engine)
         console.print("[bold]DRY RUN — nothing deleted:[/bold]")
-        console.print(f"  sync_logs (success): {stats['sync_logs_success_rows']} rows")
-        console.print(f"  sync_logs (errors): {stats['sync_logs_error_rows']} rows")
-        console.print(f"  validation_results: {stats['validation_results_rows']} rows")
+        console.print(f"  sync_logs (success >90d): {stats['sync_logs_success_rows']} rows")
+        console.print(f"  sync_logs (errors >30d):  {stats['sync_logs_error_rows']} rows")
+        console.print(f"  validation_results >30d:  {stats['validation_results_rows']} rows")
+        console.print(f"  sync_runs >90d:           {stats['sync_runs_rows']} rows")
+        console.print(f"  sync_requests done >30d:  {stats['sync_requests_rows']} rows")
     else:
         cleanup_tick(engine)
         console.print("[green]✓ Cleanup complete.[/green]")
@@ -85,9 +87,22 @@ def cleanup(dry_run: bool = typer.Option(False, "--dry-run")):
 def daemon():
     """Start the background daemon (called by entrypoint.sh)."""
     from flowbyte.config.models import AppSettings
+    from flowbyte.config.loader import load_global_config
+    from flowbyte.db.engine import get_internal_engine
     from flowbyte.logging.config import configure_logging
+    from flowbyte.logging.db_sink import AsyncDBSink
     from flowbyte.scheduler.daemon import start_daemon
 
     settings = AppSettings()
-    configure_logging(log_level=settings.log_level, env=settings.env)
+    global_cfg = load_global_config()
+    db_sink: AsyncDBSink | None = None
+    if global_cfg.logging.db_sink.enabled:
+        engine = get_internal_engine(settings.db_url)
+        db_sink = AsyncDBSink(
+            engine,
+            queue_size=global_cfg.logging.db_sink.queue_size,
+            max_payload_bytes=global_cfg.logging.db_sink.max_payload_bytes,
+            min_level=global_cfg.logging.db_sink.min_level,
+        )
+    configure_logging(log_level=settings.log_level, env=settings.env, db_sink=db_sink)
     start_daemon()

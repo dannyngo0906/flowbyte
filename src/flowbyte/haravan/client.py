@@ -87,7 +87,7 @@ class HaravanClient:
             new_any = False
             for r in records:
                 r_ts_raw = r.get("updated_at")
-                r_id = r.get("id", 0)
+                r_id = r.get("id") or 0
 
                 if r_ts_raw and last_ts:
                     r_ts = _parse_iso(r_ts_raw)

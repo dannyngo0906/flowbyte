@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from flowbyte.alerting.deduper import AlertDeduper
 from flowbyte.logging import EventName, get_logger
@@ -14,6 +14,15 @@ log = get_logger()
 _TELEGRAM_API = "https://api.telegram.org"
 _BOT_TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{10,}$")
 _TELEGRAM_MAX_TEXT = 4096
+
+
+def _should_retry_telegram(exc: BaseException) -> bool:
+    """Retry on network errors and Telegram server errors (5xx), not client errors (4xx)."""
+    if isinstance(exc, httpx.NetworkError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
 
 
 class TelegramAlerter:
@@ -54,7 +63,7 @@ class TelegramAlerter:
             return False
 
     @retry(
-        retry=retry_if_exception_type(httpx.NetworkError),
+        retry=retry_if_exception(_should_retry_telegram),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,

@@ -14,7 +14,10 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text as sa_text,
 )
+
+_NOW = sa_text("NOW()")
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 internal_metadata = MetaData()
@@ -28,8 +31,8 @@ pipelines = Table(
     Column("yaml_content", Text, nullable=False),
     Column("config_json", JSONB, nullable=False),
     Column("enabled", Boolean, nullable=False, server_default="false"),
-    Column("created_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
-    Column("updated_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
 )
 
 # ── credentials ───────────────────────────────────────────────────────────────
@@ -45,8 +48,8 @@ credentials = Table(
         # CHECK constraint defined via DDL in migration
     ),
     Column("ciphertext", Text, nullable=False),  # base64(nonce||tag||ct)
-    Column("created_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
-    Column("updated_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
     CheckConstraint("kind IN ('haravan', 'postgres')", name="credentials_kind_check"),
 )
 
@@ -65,7 +68,7 @@ sync_requests = Table(
         server_default="'incremental'",
     ),
     Column("status", String(16), nullable=False, server_default="'pending'"),
-    Column("requested_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("requested_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
     Column("claimed_at", DateTime(timezone=True)),
     Column("finished_at", DateTime(timezone=True)),
     Column("error", Text),
@@ -87,7 +90,7 @@ sync_logs = Table(
     "sync_logs",
     internal_metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"),
-    Column("timestamp", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("timestamp", DateTime(timezone=True), nullable=False, server_default=_NOW),
     Column("level", String(16), nullable=False),
     Column("event", String(64), nullable=False),
     Column("sync_id", UUID(as_uuid=True)),
@@ -167,7 +170,7 @@ validation_results = Table(
     Column("rule", String(64), nullable=False),
     Column("status", String(16), nullable=False),
     Column("details", JSONB),
-    Column("created_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
     CheckConstraint(
         "status IN ('ok', 'warning', 'failed', 'skipped')",
         name="validation_results_status_check",
@@ -181,7 +184,7 @@ scheduler_heartbeat = Table(
     "scheduler_heartbeat",
     internal_metadata,
     Column("id", Integer, primary_key=True),  # singleton, id=1
-    Column("last_beat", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("last_beat", DateTime(timezone=True), nullable=False, server_default=_NOW),
     Column("daemon_started_at", DateTime(timezone=True), nullable=False),
     Column("version", String(32), nullable=False),
     CheckConstraint("id = 1", name="scheduler_heartbeat_singleton"),
@@ -198,7 +201,7 @@ deployment_events = Table(
     Column("alembic_from", String(32)),
     Column("alembic_to", String(32)),
     Column("details", JSONB),
-    Column("at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("at", DateTime(timezone=True), nullable=False, server_default=_NOW),
 )
 
 # ── backup_events ─────────────────────────────────────────────────────────────
@@ -207,7 +210,7 @@ backup_events = Table(
     "backup_events",
     internal_metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("started_at", DateTime(timezone=True), nullable=False, server_default="NOW()"),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=_NOW),
     Column("finished_at", DateTime(timezone=True)),
     Column("status", String(16), nullable=False),
     Column("output_path", Text),

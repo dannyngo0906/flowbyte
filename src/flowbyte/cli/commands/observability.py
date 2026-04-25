@@ -172,7 +172,7 @@ def status() -> None:
 
             if "⚠️" in status_str:
                 long_running_warnings.append(
-                    f"⚠️  {p.name}/{resource}: sync running > 1h"
+                    f"⚠️  {escape(p.name)}/{escape(resource)}: sync running > 1h"
                     f" (started {str(run.started_at)[:16]})"
                 )
                 status_str = "🟡 RUNNING"
@@ -180,7 +180,7 @@ def status() -> None:
             last_sync = str(run.finished_at)[:16] if run and run.finished_at else "—"
             records = str(run.upserted_count or 0) if run else "—"
             next_sync = _compute_next_sync(cron_expr, now) if cron_expr else "—"
-            table.add_row(p.name, resource, last_sync, status_str, records, next_sync)
+            table.add_row(escape(p.name), escape(resource), last_sync, status_str, records, next_sync)
 
     console.print(table)
     for w in long_running_warnings:
@@ -232,7 +232,7 @@ def history(
         status_display = STATUS_EMOJI.get(r.status, f"⚪ {r.status}")
         table.add_row(
             str(r.started_at)[:16],
-            r.resource,
+            escape(r.resource),
             r.mode,
             status_display,
             str(r.fetched_count or 0),
@@ -292,7 +292,7 @@ def inspect(sync_id: str = typer.Argument(...)) -> None:
     from flowbyte.config.models import AppSettings
     from flowbyte.db.engine import get_internal_engine
     from flowbyte.db.internal_schema import sync_logs, sync_runs, validation_results
-    from sqlalchemy import select
+    from sqlalchemy import select, String
 
     # validate before DB query — hex/hyphen-only input cannot contain LIKE wildcards
     _assert_valid_sync_id(sync_id)
@@ -301,7 +301,7 @@ def inspect(sync_id: str = typer.Argument(...)) -> None:
 
     with engine.connect() as conn:
         run = conn.execute(
-            select(sync_runs).where(sync_runs.c.sync_id.cast(str).like(f"{sync_id}%"))
+            select(sync_runs).where(sync_runs.c.sync_id.cast(String).like(f"{sync_id}%"))
         ).one_or_none()
         if run is None:
             # sync_id already validated to hex+hyphens — safe, but escape defensively
@@ -318,8 +318,8 @@ def inspect(sync_id: str = typer.Argument(...)) -> None:
             select(validation_results).where(validation_results.c.sync_id == run.sync_id)
         ).all()
 
-    console.print(f"[bold]SYNC {run.sync_id}[/bold]")
-    console.print(f"Pipeline: {run.pipeline}  Resource: {run.resource}  Mode: {run.mode}")
+    console.print(f"[bold]SYNC {escape(str(run.sync_id))}[/bold]")
+    console.print(f"Pipeline: {escape(run.pipeline)}  Resource: {escape(run.resource)}  Mode: {run.mode}")
     console.print(f"Status: {run.status}  Duration: {run.duration_seconds}s")
     console.print(
         f"Fetched: {run.fetched_count}  Upserted: {run.upserted_count}"
@@ -350,6 +350,6 @@ def _parse_since(value: str) -> timedelta | None:
             return timedelta(minutes=float(value[:-1]))
         if value.endswith("d"):
             return timedelta(days=float(value[:-1]))
-    except ValueError:
+    except (ValueError, OverflowError):
         pass
     return None

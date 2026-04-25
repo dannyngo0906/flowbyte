@@ -1,6 +1,8 @@
 """ValidationExecutor: runs post-sync validation rules and persists results."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
@@ -62,6 +64,7 @@ class ValidationExecutor:
                             rule=vr.rule,
                             status=vr.status,
                             details=vr.details or {},
+                            created_at=datetime.now(timezone.utc),
                         )
                     )
             log.info(

@@ -203,12 +203,18 @@ class SyncRunner:
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
 
+        with self._dest.connect() as dest_conn:
+            result.rows_before = count_active_rows(dest_conn, table)
+
         with self._dest.begin() as dest_conn:
             stats = upsert_batch(
                 dest_conn, table, transformed, sync_id,
                 primary_key=["inventory_item_id", "location_id"],
             )
             result.upserted_count = stats.upserted
+
+        with self._dest.connect() as dest_conn:
+            result.rows_after = count_active_rows(dest_conn, table)
 
     def _sync_locations(
         self, spec: SyncJobSpec, sync_id: str, result: SyncResult
@@ -221,11 +227,17 @@ class SyncRunner:
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
 
+        with self._dest.connect() as dest_conn:
+            result.rows_before = count_active_rows(dest_conn, table)
+
         with self._dest.begin() as dest_conn:
             stats = upsert_batch(dest_conn, table, transformed, sync_id)
             result.upserted_count = stats.upserted
 
             self._run_soft_delete_sweep(dest_conn, table, sync_id, result)
+
+        with self._dest.connect() as dest_conn:
+            result.rows_after = count_active_rows(dest_conn, table)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
