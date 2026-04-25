@@ -9,7 +9,7 @@ from unittest.mock import DEFAULT, MagicMock, patch
 
 import pytest
 
-from flowbyte.config.models import SyncJobSpec, TransformConfig
+from flowbyte.config.models import SyncJobSpec
 from flowbyte.sync.load import LoadStats
 from flowbyte.sync.runner import SyncRunner
 
@@ -63,8 +63,8 @@ def _make_runner(extra_resources: dict | None = None) -> SyncRunner:
     cfg = MagicMock()
     cfg.name = "shop_main"
     cfg.resources = {
-        "orders": MagicMock(transform=TransformConfig()),
-        "customers": MagicMock(transform=TransformConfig()),
+        "orders": MagicMock(spec=["enabled", "sync_mode", "schedule", "weekly_full_refresh"]),
+        "customers": MagicMock(spec=["enabled", "sync_mode", "schedule", "weekly_full_refresh"]),
         **(extra_resources or {}),
     }
     haravan = MagicMock()
@@ -257,7 +257,7 @@ class TestSyncRunnerResultStatus:
         assert "API fail" in result.error
 
     def test_unknown_resource_results_in_failed(self):
-        extra = {"unknown_xyz": MagicMock(transform=TransformConfig())}
+        extra = {"unknown_xyz": MagicMock()}
         spec = _make_spec("unknown_xyz", "incremental")
         with _runner_patches() as m:
             m["load_checkpoint"].return_value = None

@@ -107,23 +107,6 @@ def validate(name: str = typer.Argument(...)):
         console.print(f"[red]✗ YAML validation failed: {e}[/red]")
         raise typer.Exit(2)
 
-    # Transform semantic validation (rename-to-existing-column check)
-    from flowbyte.sync.transform import validate_transform_for_resource
-
-    transform_errors: list[str] = []
-    for resource_name, resource_cfg in cfg.resources.items():
-        if not resource_cfg.enabled:
-            continue
-        errs = validate_transform_for_resource(resource_cfg.transform, resource_name)
-        for err in errs:
-            transform_errors.append(f"  [{resource_name}] {err}")
-
-    if transform_errors:
-        console.print("[red]✗ Transform validation failed:[/red]")
-        for msg in transform_errors:
-            console.print(msg)
-        raise typer.Exit(2)
-
     # Schedule collision check
     collisions = cfg.detect_schedule_collisions()
     if collisions:

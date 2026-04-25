@@ -1,4 +1,8 @@
-"""Extract products + variants (variants are nested in products response)."""
+"""Extract products from Haravan API.
+
+Variants stay nested inside each product dict (in _raw) — dbt will unnest them
+via jsonb_array_elements(_raw->'variants'). No separate variants table.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -11,11 +15,8 @@ def extract_products_and_variants(
     client: HaravanClient,
     checkpoint: tuple[datetime, int] | None,
     mode: str,
-) -> tuple[Iterator[dict], Iterator[dict]]:
-    """Returns (products_iter, variants_iter). Variants inject product_id FK."""
-    products_buf: list[dict] = []
-    variants_buf: list[dict] = []
-
+) -> Iterator[dict]:
+    """Yield product dicts. Variants stay nested in each product's 'variants' key."""
     params: dict = {"order": "updated_at asc, id asc"}
     paginate_checkpoint = None
     if mode == "incremental" and checkpoint:
@@ -23,12 +24,7 @@ def extract_products_and_variants(
         params["updated_at_min"] = (last_ts - timedelta(minutes=5)).isoformat()
         paginate_checkpoint = checkpoint
 
-    for product in client.paginate("products", params=params, page_size=250, checkpoint=paginate_checkpoint):
-        # Separate out variants before yielding product
-        product_copy = {k: v for k, v in product.items() if k != "variants"}
-        products_buf.append(product_copy)
-        for variant in product.get("variants", []):
-            variant["product_id"] = product["id"]
-            variants_buf.append(variant)
-
-    return iter(products_buf), iter(variants_buf)
+    for product in client.paginate(
+        "products", params=params, page_size=250, checkpoint=paginate_checkpoint
+    ):
+        yield product

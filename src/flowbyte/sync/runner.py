@@ -9,10 +9,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from flowbyte.config.models import PipelineConfig, SyncJobSpec, SyncResult
-from flowbyte.db.destination_schema import get_table
+from flowbyte.db.destination_schema import destination_metadata, get_table
 from flowbyte.db.internal_schema import sync_runs
 from flowbyte.haravan.client import HaravanClient
-from flowbyte.haravan.exceptions import InvalidRecordError
 from flowbyte.logging import EventName, get_logger
 from flowbyte.sync.checkpoint import compute_watermark, load_checkpoint, save_checkpoint
 from flowbyte.sync.load import LoadStats, count_active_rows, sweep_soft_deletes, upsert_batch
@@ -35,6 +34,8 @@ class SyncRunner:
         self._haravan = haravan_client
         self._internal = internal_engine
         self._dest = dest_engine
+        # Ensure destination tables exist (idempotent — CREATE TABLE IF NOT EXISTS)
+        destination_metadata.create_all(bind=dest_engine, checkfirst=True)
 
     def run(self, spec: SyncJobSpec) -> SyncResult:
         sync_id = spec.sync_id or str(uuid4())
@@ -56,8 +57,8 @@ class SyncRunner:
                 self._sync_inventory_levels(spec, sync_id, result)
             elif spec.resource == "locations":
                 self._sync_locations(spec, sync_id, result)
-            elif spec.resource in ("products", "variants"):
-                self._sync_products_and_variants(spec, sync_id, result)
+            elif spec.resource == "products":
+                self._sync_products(spec, sync_id, result)
             else:
                 self._sync_incremental_resource(spec, sync_id, result)
 
@@ -88,8 +89,6 @@ class SyncRunner:
         self, spec: SyncJobSpec, sync_id: str, result: SyncResult
     ) -> None:
         table = get_table(spec.resource)
-        resource_cfg = self._cfg.resources[spec.resource]
-        transform_cfg = resource_cfg.transform
 
         with self._internal.begin() as int_conn:
             checkpoint = load_checkpoint(int_conn, spec.pipeline, spec.resource)
@@ -115,7 +114,7 @@ class SyncRunner:
         for raw in extractor(self._haravan, checkpoint, effective_mode):
             records_raw.append(raw)
 
-        transformed, skipped = self._transform_batch(records_raw, transform_cfg, spec.resource)
+        transformed, skipped = self._transform_batch(records_raw, spec.resource)
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
 
@@ -137,13 +136,12 @@ class SyncRunner:
         with self._internal.begin() as int_conn:
             save_checkpoint(int_conn, spec.pipeline, spec.resource, watermark, sync_id)
 
-    def _sync_products_and_variants(
+    def _sync_products(
         self, spec: SyncJobSpec, sync_id: str, result: SyncResult
     ) -> None:
         from flowbyte.haravan.resources.products import extract_products_and_variants
 
-        resource_cfg = self._cfg.resources.get("products", self._cfg.resources.get(spec.resource))
-        transform_cfg = resource_cfg.transform if resource_cfg else None
+        table = get_table("products")
 
         with self._internal.begin() as int_conn:
             checkpoint = load_checkpoint(int_conn, spec.pipeline, "products")
@@ -152,43 +150,33 @@ class SyncRunner:
         if checkpoint is None and spec.mode == "incremental":
             effective_mode = "full_refresh"
 
-        products_iter, variants_iter = extract_products_and_variants(
+        products_raw = list(extract_products_and_variants(
             self._haravan, checkpoint, effective_mode
-        )
+        ))
 
-        products_raw = list(products_iter)
-        variants_raw = list(variants_iter)
+        products_transformed, skipped = self._transform_batch(products_raw, "products")
+        result.fetched_count = len(products_raw)
+        result.skipped_invalid = skipped
 
-        products_transformed, p_skipped = self._transform_batch(
-            products_raw, transform_cfg, "products"
-        )
-        variant_resource_cfg = self._cfg.resources.get("variants")
-        variant_transform_cfg = variant_resource_cfg.transform if variant_resource_cfg else None
-        variants_transformed, v_skipped = self._transform_batch(
-            variants_raw, variant_transform_cfg, "variants"
-        )
-
-        result.fetched_count = len(products_raw) + len(variants_raw)
-        result.skipped_invalid = p_skipped + v_skipped
+        with self._dest.connect() as dest_conn:
+            result.rows_before = count_active_rows(dest_conn, table)
 
         with self._dest.begin() as dest_conn:
-            p_stats = upsert_batch(dest_conn, get_table("products"), products_transformed, sync_id)
-            v_stats = upsert_batch(dest_conn, get_table("variants"), variants_transformed, sync_id)
-            result.upserted_count = p_stats.upserted + v_stats.upserted
+            p_stats = upsert_batch(dest_conn, table, products_transformed, sync_id)
+            result.upserted_count = p_stats.upserted
 
             if effective_mode == "full_refresh":
                 self._run_soft_delete_sweep(
-                    dest_conn,
-                    get_table("products"),
-                    sync_id,
-                    result,
+                    dest_conn, table, sync_id, result,
                     effective_fetched=len(products_transformed),
                 )
+
+        with self._dest.connect() as dest_conn:
+            result.rows_after = count_active_rows(dest_conn, table)
 
         watermark = compute_watermark(products_transformed)
         with self._internal.begin() as int_conn:
             save_checkpoint(int_conn, spec.pipeline, "products", watermark, sync_id)
-            save_checkpoint(int_conn, spec.pipeline, "variants", watermark, sync_id)
 
     def _sync_inventory_levels(
         self, spec: SyncJobSpec, sync_id: str, result: SyncResult
@@ -199,7 +187,7 @@ class SyncRunner:
         table = get_table("inventory_levels")
 
         records_raw = list(extract_inventory_levels(self._haravan, location_ids))
-        transformed, skipped = self._transform_batch(records_raw, None, "inventory_levels")
+        transformed, skipped = self._transform_batch(records_raw, "inventory_levels")
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
 
@@ -223,7 +211,7 @@ class SyncRunner:
 
         table = get_table("locations")
         records_raw = list(extract_locations(self._haravan))
-        transformed, skipped = self._transform_batch(records_raw, None, "locations")
+        transformed, skipped = self._transform_batch(records_raw, "locations")
         result.fetched_count = len(records_raw)
         result.skipped_invalid = skipped
 
@@ -244,21 +232,16 @@ class SyncRunner:
     def _transform_batch(
         self,
         records: list[dict],
-        transform_cfg,
         resource: str,
     ) -> tuple[list[dict], int]:
-        from flowbyte.config.models import TransformConfig
-
-        cfg = transform_cfg or TransformConfig()
         transformed = []
         skipped = 0
         for r in records:
-            try:
-                t = apply_transform(r, cfg, resource)
-                transformed.append(t)
-            except InvalidRecordError as e:
+            row = apply_transform(r, resource)
+            if row is None:
                 skipped += 1
-                log.warning(EventName.RECORD_SKIPPED, resource=resource, error=str(e))
+            else:
+                transformed.append(row)
         return transformed, skipped
 
     def _run_soft_delete_sweep(

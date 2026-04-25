@@ -11,7 +11,10 @@ _yaml = YAML()
 _yaml.preserve_quotes = True
 
 
-def load_global_config(path: Path | str = "/etc/flowbyte/config.yml") -> GlobalConfig:
+def load_global_config(path: Path | str | None = None) -> GlobalConfig:
+    import os
+    if path is None:
+        path = os.environ.get("FLOWBYTE_CONFIG_PATH", "/etc/flowbyte/config.yml")
     p = Path(path)
     if not p.exists():
         return GlobalConfig()
@@ -81,14 +84,6 @@ resources:
       enabled: true
       cron: "0 4 * * 0"
 
-  variants:
-    enabled: true
-    sync_mode: incremental
-    schedule: "10 */12 * * *"
-    weekly_full_refresh:
-      enabled: true
-      cron: "0 4 * * 0"
-
   inventory_levels:
     enabled: true
     sync_mode: full_refresh
@@ -105,14 +100,4 @@ resources:
       enabled: true
       cron: "0 5 * * 0"
 
-# Field transformation (optional)
-# resources:
-#   orders:
-#     transform:
-#       rename:
-#         total_price: revenue
-#       skip:
-#         - note_attributes
-#       type_override:
-#         total_price: "numeric(12,2)"
 """

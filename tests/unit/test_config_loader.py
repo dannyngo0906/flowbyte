@@ -70,8 +70,9 @@ def test_load_pipeline_config_minimal(tmp_path):
 def test_load_pipeline_config_applies_resource_defaults(tmp_path):
     path = _write_minimal_pipeline(tmp_path)
     cfg = load_pipeline_config(path)
-    for res in ["orders", "customers", "products", "variants", "inventory_levels", "locations"]:
+    for res in ["orders", "customers", "products", "inventory_levels", "locations"]:
         assert res in cfg.resources, f"Missing resource: {res}"
+    assert "variants" not in cfg.resources
 
 
 def test_load_pipeline_config_invalid_yaml_raises(tmp_path):
@@ -88,7 +89,8 @@ def test_load_pipeline_config_missing_required_field_raises(tmp_path):
         load_pipeline_config(path)
 
 
-def test_load_pipeline_config_with_transform_section(tmp_path):
+def test_load_pipeline_config_with_legacy_transform_section_is_silently_ignored(tmp_path):
+    """YAML files with old transform: sections must still load without errors (backward compat)."""
     path = tmp_path / "shop.yml"
     path.write_text("""\
 name: shop_main
@@ -114,9 +116,9 @@ resources:
         total_price: "numeric(12,2)"
 """)
     cfg = load_pipeline_config(path)
-    assert cfg.resources["orders"].transform.rename == {"total_price": "revenue"}
-    assert "note_attributes" in cfg.resources["orders"].transform.skip
-    assert cfg.resources["orders"].transform.type_override["total_price"] == "numeric(12,2)"
+    assert cfg.resources["orders"].enabled is True
+    assert cfg.resources["orders"].sync_mode == "incremental"
+    assert not hasattr(cfg.resources["orders"], "transform")
 
 
 def test_load_pipeline_config_invalid_cron_raises(tmp_path):
@@ -168,8 +170,9 @@ def test_pipeline_template_has_no_plaintext_secret(tmp_path):
 
 def test_pipeline_template_has_all_phase1_resources():
     content = PIPELINE_TEMPLATE.format(name="shop")
-    for resource in ["orders", "customers", "products", "variants", "inventory_levels", "locations"]:
+    for resource in ["orders", "customers", "products", "inventory_levels", "locations"]:
         assert resource in content
+    assert "variants" not in content
 
 
 # ── save_pipeline_config ──────────────────────────────────────────────────────

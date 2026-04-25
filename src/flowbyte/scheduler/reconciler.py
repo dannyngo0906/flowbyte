@@ -335,5 +335,7 @@ def _build_dest_url(cfg: PipelineConfig, pg_creds: dict) -> str:
 
 def _get_timezone(cfg: PipelineConfig):
     from flowbyte.config.loader import load_global_config
-    global_cfg = load_global_config()
+    from flowbyte.config.models import AppSettings
+    settings = AppSettings()
+    global_cfg = load_global_config(settings.config_path)
     return global_cfg.get_zoneinfo()

@@ -20,9 +20,11 @@ def alert(action: str = typer.Argument(..., help="test")):
 
 def _alert_test() -> None:
     from flowbyte.config.loader import load_global_config
+    from flowbyte.config.models import AppSettings
     from flowbyte.alerting.telegram import TelegramAlerter
 
-    cfg = load_global_config()
+    settings = AppSettings()
+    cfg = load_global_config(settings.config_path)
     tg = cfg.telegram
 
     if not tg.enabled:

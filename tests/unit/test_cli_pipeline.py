@@ -380,24 +380,17 @@ class TestValidateCommand:
         result = runner.invoke(app, ["validate", "../../etc/passwd"])
         assert result.exit_code == 2
 
-    def test_validate_yaml_parse_fails_on_skip_id(self, tmp_path, monkeypatch):
+    def test_validate_legacy_transform_section_silently_ignored(self, tmp_path, monkeypatch):
+        """Legacy transform: sections must be silently ignored — no YAML parse error."""
         monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
         (tmp_path / "shop_main.yml").write_text(
             _MINIMAL_PIPELINE_YAML
-            + "resources:\n  orders:\n    transform:\n      skip:\n        - id\n"
+            + "resources:\n  orders:\n    transform:\n      rename:\n        total_price: revenue\n      skip:\n        - id\n"
         )
         result = runner.invoke(app, ["validate", "shop_main"])
-        assert result.exit_code != 0
-
-    def test_validate_transform_rename_collision_exits_nonzero(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("FLOWBYTE_PIPELINES_DIR", str(tmp_path))
-        (tmp_path / "shop_main.yml").write_text(
-            _MINIMAL_PIPELINE_YAML
-            + "resources:\n  orders:\n    transform:\n      rename:\n        total_price: email\n"
-        )
-        result = runner.invoke(app, ["validate", "shop_main"])
-        assert result.exit_code != 0
-        assert "email" in result.output
+        # YAML parsing must succeed — exit code != 2 (2 = YAML validation failure)
+        assert result.exit_code != 2
+        assert "YAML validation failed" not in result.output
 
 
 class TestCredsDeleteCommand:

@@ -94,7 +94,7 @@ def daemon():
     from flowbyte.scheduler.daemon import start_daemon
 
     settings = AppSettings()
-    global_cfg = load_global_config()
+    global_cfg = load_global_config(settings.config_path)
     db_sink: AsyncDBSink | None = None
     if global_cfg.logging.db_sink.enabled:
         engine = get_internal_engine(settings.db_url)

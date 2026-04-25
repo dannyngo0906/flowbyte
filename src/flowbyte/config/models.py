@@ -4,7 +4,7 @@ from __future__ import annotations
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,7 +14,6 @@ RESOURCE_SCHEDULE_DEFAULTS: dict[str, str] = {
     "orders": "0 */2 * * *",
     "customers": "5 */2 * * *",
     "products": "10 */12 * * *",
-    "variants": "10 */12 * * *",
     "inventory_levels": "15 */2 * * *",
     "locations": "20 0 * * *",
 }
@@ -23,7 +22,6 @@ RESOURCE_WEEKLY_FULL_DEFAULTS: dict[str, str] = {
     "orders": "0 3 * * 0",
     "customers": "30 3 * * 0",
     "products": "0 4 * * 0",
-    "variants": "0 4 * * 0",
     "inventory_levels": "30 4 * * 0",
     "locations": "0 5 * * 0",
 }
@@ -32,34 +30,11 @@ RESOURCE_SYNC_MODE_DEFAULTS: dict[str, str] = {
     "orders": "incremental",
     "customers": "incremental",
     "products": "incremental",
-    "variants": "incremental",
     "inventory_levels": "full_refresh",
     "locations": "full_refresh",
 }
 
-PHASE_1_RESOURCES = ["orders", "customers", "products", "variants", "inventory_levels", "locations"]
-
-
-# ── Transform ─────────────────────────────────────────────────────────────────
-
-
-class TransformConfig(BaseModel):
-    rename: dict[str, str] = Field(default_factory=dict)
-    skip: list[str] = Field(default_factory=list)
-    type_override: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def check_no_id_skip(self) -> "TransformConfig":
-        if "id" in self.skip:
-            raise ValueError("Cannot skip 'id' column (primary key)")
-        return self
-
-    @model_validator(mode="after")
-    def check_no_rename_collision(self) -> "TransformConfig":
-        values = list(self.rename.values())
-        if len(values) != len(set(values)):
-            raise ValueError("Rename creates duplicate column names")
-        return self
+PHASE_1_RESOURCES = ["orders", "customers", "products", "inventory_levels", "locations"]
 
 
 # ── Resource ──────────────────────────────────────────────────────────────────
@@ -78,13 +53,14 @@ class WeeklyFullRefreshConfig(BaseModel):
 
 
 class ResourceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")  # silently ignore legacy transform: section in YAML
+
     enabled: bool = True
     sync_mode: str = "incremental"
     schedule: str = "0 */2 * * *"
     weekly_full_refresh: WeeklyFullRefreshConfig = Field(
         default_factory=WeeklyFullRefreshConfig
     )
-    transform: TransformConfig = Field(default_factory=TransformConfig)
 
     @field_validator("sync_mode")
     @classmethod
@@ -138,10 +114,9 @@ class PipelineConfig(BaseModel):
 
     def detect_schedule_collisions(self) -> dict[str, list[str]]:
         """Return mapping of cron-minute → list of resource names that collide."""
-        _PAIRED_WITH_PARENT = {"variants"}
         buckets: dict[str, list[str]] = {}
         for name, cfg in self.resources.items():
-            if not cfg.enabled or name in _PAIRED_WITH_PARENT:
+            if not cfg.enabled:
                 continue
             minute = cfg.schedule.split()[0]
             buckets.setdefault(minute, []).append(name)
@@ -238,6 +213,7 @@ class AppSettings(BaseSettings):
     skip_migration: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    config_path: str = "/etc/flowbyte/config.yml"
 
 
 # ── Sync job spec / result (used by runner) ───────────────────────────────────

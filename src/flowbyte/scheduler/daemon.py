@@ -45,7 +45,7 @@ def start_daemon() -> None:
     scheduler = build_scheduler()
 
     # ── Build Telegram alerter (None when disabled) ───────────────────────────
-    global_cfg = load_global_config()
+    global_cfg = load_global_config(settings.config_path)
     alerter: TelegramAlerter | None = None
     if global_cfg.telegram.enabled:
         alerter = TelegramAlerter(

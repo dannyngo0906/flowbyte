@@ -9,7 +9,6 @@ from flowbyte.config.models import (
     PipelineConfig,
     PostgresDestConfig,
     ResourceConfig,
-    TransformConfig,
     WeeklyFullRefreshConfig,
 )
 
@@ -33,38 +32,6 @@ def _minimal_pipeline(**overrides):
     }
     defaults.update(overrides)
     return defaults
-
-
-class TestTransformConfig:
-    def test_default_empty(self):
-        cfg = TransformConfig()
-        assert cfg.rename == {}
-        assert cfg.skip == []
-        assert cfg.type_override == {}
-
-    def test_valid_rename(self):
-        cfg = TransformConfig(rename={"total_price": "revenue"})
-        assert cfg.rename == {"total_price": "revenue"}
-
-    def test_skip_id_raises(self):
-        with pytest.raises(ValidationError, match="'id'"):
-            TransformConfig(skip=["id"])
-
-    def test_skip_other_fields_ok(self):
-        cfg = TransformConfig(skip=["note_attributes", "browser_ip"])
-        assert "note_attributes" in cfg.skip
-
-    def test_rename_duplicate_values_raises(self):
-        with pytest.raises(ValidationError, match="duplicate"):
-            TransformConfig(rename={"email": "contact", "phone": "contact"})
-
-    def test_rename_unique_values_ok(self):
-        cfg = TransformConfig(rename={"email": "contact_email", "phone": "contact_phone"})
-        assert len(cfg.rename) == 2
-
-    def test_type_override_valid(self):
-        cfg = TransformConfig(type_override={"total_price": "numeric(12,2)"})
-        assert cfg.type_override["total_price"] == "numeric(12,2)"
 
 
 class TestWeeklyFullRefreshConfig:
@@ -115,13 +82,13 @@ class TestPipelineConfig:
         assert "orders" in cfg.resources
         assert "customers" in cfg.resources
         assert "products" in cfg.resources
-        assert "variants" in cfg.resources
         assert "inventory_levels" in cfg.resources
         assert "locations" in cfg.resources
+        assert "variants" not in cfg.resources
 
     def test_all_phase1_resources_enabled_by_default(self):
         cfg = PipelineConfig(**_minimal_pipeline())
-        for name in ["orders", "customers", "products", "variants", "inventory_levels", "locations"]:
+        for name in ["orders", "customers", "products", "inventory_levels", "locations"]:
             assert cfg.resources[name].enabled is True
 
     def test_detect_no_collisions_with_staggered_defaults(self):
