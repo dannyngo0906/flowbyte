@@ -18,6 +18,15 @@ services:
       FLOWBYTE_LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FLOWBYTE_LOG_FORMAT: json
       FLOWBYTE_PIPELINES_DIR: /etc/flowbyte/pipelines
+      FLOWBYTE_VERSION: ${FLOWBYTE_VERSION:-0.0.0}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    healthcheck:
+      test: ["CMD", "flowbyte", "health", "--strict"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
     volumes:
       - ./config/config.yml:/etc/flowbyte/config.yml:ro
       - ./config/pipelines:/etc/flowbyte/pipelines:ro

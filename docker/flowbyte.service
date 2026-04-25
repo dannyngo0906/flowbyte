@@ -1,0 +1,21 @@
+[Unit]
+Description=Flowbyte ETL Daemon
+Requires=docker.service
+After=docker.service network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=1000
+Group=1000
+WorkingDirectory=/opt/flowbyte
+EnvironmentFile=-/opt/flowbyte/.env
+ExecStart=/usr/bin/docker compose up --remove-orphans
+ExecStop=/usr/bin/docker compose down --timeout 30
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

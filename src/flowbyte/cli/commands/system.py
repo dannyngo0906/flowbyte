@@ -30,23 +30,27 @@ def health(strict: bool = typer.Option(False, "--strict")):
 
     checks: dict[str, bool] = {}
 
-    with engine.connect() as conn:
-        # Heartbeat check
-        row = conn.execute(select(scheduler_heartbeat)).one_or_none()
-        if row:
-            age = (datetime.now(timezone.utc) - row.last_beat).total_seconds()
-            checks["heartbeat_fresh"] = age < 120
-        else:
-            checks["heartbeat_fresh"] = False
+    try:
+        with engine.connect() as conn:
+            # Heartbeat check
+            row = conn.execute(select(scheduler_heartbeat)).one_or_none()
+            if row:
+                age = (datetime.now(timezone.utc) - row.last_beat).total_seconds()
+                checks["heartbeat_fresh"] = age < 120
+            else:
+                checks["heartbeat_fresh"] = False
 
-        # Stuck requests
-        stuck = conn.execute(
-            select(func.count()).select_from(sync_requests).where(
-                sync_requests.c.status == "claimed",
-                sync_requests.c.claimed_at < datetime.now(timezone.utc) - timedelta(minutes=5),
-            )
-        ).scalar() or 0
-        checks["no_stuck_requests"] = stuck == 0
+            # Stuck requests
+            stuck = conn.execute(
+                select(func.count()).select_from(sync_requests).where(
+                    sync_requests.c.status == "claimed",
+                    sync_requests.c.claimed_at < datetime.now(timezone.utc) - timedelta(minutes=5),
+                )
+            ).scalar() or 0
+            checks["no_stuck_requests"] = stuck == 0
+    except Exception as e:
+        console.print(f"[red]✗ DB unreachable: {escape(str(e))}[/red]")
+        raise typer.Exit(3)
 
     unhealthy = [k for k, ok in checks.items() if not ok]
 
@@ -82,6 +86,31 @@ def cleanup(dry_run: bool = typer.Option(False, "--dry-run")):
     else:
         cleanup_tick(engine)
         console.print("[green]✓ Cleanup complete.[/green]")
+
+
+@app.command(name="log-deployment")
+def log_deployment(
+    version: str = typer.Option("unknown", "--version"),
+) -> None:
+    """Record a deployment event in the internal DB (called by entrypoint.sh)."""
+    if len(version) > 32:
+        console.print("[red]✗ --version exceeds 32 characters[/red]")
+        raise typer.Exit(1)
+
+    from flowbyte.config.models import AppSettings
+    from flowbyte.db.engine import get_internal_engine
+    from flowbyte.db.internal_schema import deployment_events
+
+    settings = AppSettings()
+    engine = get_internal_engine(settings.db_url)
+    with engine.begin() as conn:
+        conn.execute(
+            deployment_events.insert().values(
+                event="deploy",
+                version=version,
+            )
+        )
+    console.print(f"[green]✓ Deployment event logged (version={escape(version)})[/green]")
 
 
 @app.command()

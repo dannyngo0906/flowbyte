@@ -116,7 +116,7 @@ def _inventory_runner(
     return SyncRunner(_make_cfg(), client, internal_engine, dest_engine)
 
 
-_ALLOWED_TABLES = frozenset({"inventory_levels", "products", "variants"})
+_ALLOWED_TABLES = frozenset({"inventory_levels", "products"})
 
 
 def _count_rows(engine, table_name: str) -> int:
@@ -137,12 +137,12 @@ class TestInventoryEndpointFixE2E:
         with internal_engine.begin() as conn:
             conn.execute(text("TRUNCATE sync_checkpoints, sync_runs CASCADE"))
         with dest_engine.begin() as conn:
-            conn.execute(text("TRUNCATE inventory_levels, variants, products CASCADE"))
+            conn.execute(text("TRUNCATE inventory_levels, products CASCADE"))
         yield
         with internal_engine.begin() as conn:
             conn.execute(text("TRUNCATE sync_checkpoints, sync_runs CASCADE"))
         with dest_engine.begin() as conn:
-            conn.execute(text("TRUNCATE inventory_levels, variants, products CASCADE"))
+            conn.execute(text("TRUNCATE inventory_levels, products CASCADE"))
 
     # ── Bước 1 → Bước cuối ───────────────────────────────────────────────────
 
